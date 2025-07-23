@@ -73,7 +73,10 @@
               </span>
             </td>
             <td>
-              <button @click="viewUserDetails(user)" class="btn-view">View</button>
+              <div class="action-buttons">
+                <button @click="viewUserDetails(user)" class="btn-view">View</button>
+                <button @click="confirmDeleteUser(user)" class="btn-delete">Delete</button>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -120,6 +123,32 @@
         </div>
       </div>
     </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div v-if="userToDelete" class="modal-overlay" @click="cancelDelete">
+      <div class="modal-content" @click.stop>
+        <h3>Confirm User Deletion</h3>
+        <div class="warning-message">
+          <div class="warning-icon">⚠️</div>
+          <p>Are you sure you want to delete user <strong>"{{ userToDelete.username }}"</strong>?</p>
+          <p class="warning-text">This action will permanently remove:</p>
+          <ul class="warning-list">
+            <li>The user account</li>
+            <li>All reservation history ({{ userToDelete.total_reservations || 0 }} reservations)</li>
+            <li>All associated data</li>
+          </ul>
+          <p class="warning-text"><strong>This action cannot be undone!</strong></p>
+        </div>
+
+        <div class="modal-actions">
+          <button @click="cancelDelete" class="btn-cancel">Cancel</button>
+          <button @click="deleteUser" class="btn-confirm-delete" :disabled="deleteLoading">
+            <span v-if="deleteLoading">Deleting...</span>
+            <span v-else>Delete User</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -130,7 +159,9 @@ import axios from 'axios';
 const users = ref([]);
 const searchQuery = ref('');
 const selectedUser = ref(null);
+const userToDelete = ref(null);
 const loading = ref(false);
+const deleteLoading = ref(false);
 const error = ref(null);
 
 const loadUsers = async () => {
@@ -189,6 +220,50 @@ const viewUserDetails = (user) => {
 
 const closeModal = () => {
   selectedUser.value = null;
+};
+
+const confirmDeleteUser = (user) => {
+  userToDelete.value = user;
+};
+
+const cancelDelete = () => {
+  userToDelete.value = null;
+  deleteLoading.value = false;
+};
+
+const deleteUser = async () => {
+  if (!userToDelete.value) return;
+  
+  try {
+    deleteLoading.value = true;
+    
+    const response = await axios.delete(`/api/admin/users/${userToDelete.value.id}`);
+    
+    if (response.status === 200) {
+      // Remove user from local list
+      users.value = users.value.filter(user => user.id !== userToDelete.value.id);
+      
+      // Show success message (you could add a toast notification here)
+      console.log('User deleted successfully');
+      
+      // Close modal
+      userToDelete.value = null;
+      
+      // Optionally reload users to ensure data consistency
+      await loadUsers();
+    }
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    
+    // Show error message
+    if (error.response?.data?.error) {
+      alert(`Error: ${error.response.data.error}`);
+    } else {
+      alert('Failed to delete user. Please try again.');
+    }
+  } finally {
+    deleteLoading.value = false;
+  }
 };
 
 const formatDate = (isoString) => {
@@ -275,6 +350,7 @@ th, td {
   padding: 1rem;
   text-align: left;
   border-bottom: 1px solid #e9ecef;
+  color: #000;
 }
 
 th {
@@ -309,6 +385,11 @@ tr:hover {
   color: #0c5460;
 }
 
+.action-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .btn-view {
   background-color: #42b883;
   color: white;
@@ -321,6 +402,81 @@ tr:hover {
 
 .btn-view:hover {
   background-color: #38a169;
+}
+
+.btn-delete {
+  background-color: #e74c3c;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.btn-delete:hover {
+  background-color: #c0392b;
+}
+
+.warning-message {
+  margin: 1rem 0;
+  padding: 1rem;
+  background-color: #fff3cd;
+  border: 1px solid #ffeaa7;
+  border-radius: 4px;
+}
+
+.warning-icon {
+  font-size: 2rem;
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.warning-text {
+  color: #856404;
+  font-weight: bold;
+  margin: 0.5rem 0;
+}
+
+.warning-list {
+  margin: 0.5rem 0 1rem 1rem;
+  color: #856404;
+}
+
+.warning-list li {
+  margin: 0.25rem 0;
+}
+
+.btn-cancel {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 0.5rem;
+}
+
+.btn-cancel:hover {
+  background-color: #5a6268;
+}
+
+.btn-confirm-delete {
+  background-color: #e74c3c;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-confirm-delete:hover:not(:disabled) {
+  background-color: #c0392b;
+}
+
+.btn-confirm-delete:disabled {
+  background-color: #95a5a6;
+  cursor: not-allowed;
 }
 
 .modal-overlay {
@@ -358,6 +514,7 @@ tr:hover {
 
 .user-info p {
   margin: 0.5rem 0;
+  color: #000;
 }
 
 .activity-stats {
@@ -413,5 +570,67 @@ tr:hover {
   th, td {
     padding: 0.5rem;
   }
+  
+  .action-buttons {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  
+  .btn-view, .btn-delete {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+  }
+  
+  .modal-content {
+    padding: 1rem;
+    margin: 1rem;
+  }
+}
+
+.loading-state, .error-state, .empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: #6c757d;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #42b883;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 1rem;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.error-icon, .empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.btn-retry {
+  background-color: #42b883;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 1rem;
+}
+
+.btn-retry:hover {
+  background-color: #38a169;
+}
+
+.no-results {
+  text-align: center;
+  padding: 2rem;
+  color: #6c757d;
+  font-style: italic;
 }
 </style>

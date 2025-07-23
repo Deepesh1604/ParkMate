@@ -2,6 +2,11 @@
   <div class="user-overview">
     <h2>Dashboard Overview</h2>
     
+    <!-- Debug info (remove in production) -->
+    <div v-if="!analytics?.summary" class="debug-info">
+      <p>Analytics data: {{ JSON.stringify(analytics) }}</p>
+    </div>
+    
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-icon">📋</div>
@@ -30,7 +35,7 @@
       <div class="stat-card">
         <div class="stat-icon">💰</div>
         <div class="stat-content">
-          <h3>${{ analytics.summary?.total_spent || 0 }}</h3>
+          <h3>${{ (analytics.summary?.total_spent || 0).toFixed(2) }}</h3>
           <p>Total Spent</p>
         </div>
       </div>
@@ -38,7 +43,7 @@
       <div class="stat-card">
         <div class="stat-icon">⏱️</div>
         <div class="stat-content">
-          <h3>{{ analytics.summary?.average_duration_hours || 0 }}h</h3>
+          <h3>{{ (analytics.summary?.average_duration_hours || 0).toFixed(2) }}h</h3>
           <p>Average Duration</p>
         </div>
       </div>
@@ -98,6 +103,17 @@ const formatDate = (dateString) => {
 .user-overview h2 {
   margin-bottom: 2rem;
   color: #2c3e50;
+}
+
+.debug-info {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  font-family: monospace;
+  font-size: 0.875rem;
+  color: #6c757d;
 }
 
 .stats-grid {

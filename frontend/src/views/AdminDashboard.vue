@@ -22,7 +22,7 @@
     <div class="dashboard-content">
       <!-- Overview Tab -->
       <div v-if="activeTab === 'overview'" class="tab-content">
-        <AdminOverview :analytics="analytics" />
+        <AdminOverview :analytics="analytics" @refresh="loadAnalytics" />
       </div>
 
       <!-- Parking Lots Tab -->
@@ -75,19 +75,27 @@ const tabs = [
 const loadAnalytics = async () => {
   try {
     loading.value = true;
-    
-    // Fetch current admin profile
-    const adminResponse = await axios.get('/api/admin/profile');
-    admin.value = adminResponse.data;
+    console.log('Loading analytics...');
     
     // Fetch admin analytics
     const analyticsResponse = await axios.get('/api/admin/analytics');
+    console.log('Analytics response:', analyticsResponse.data);
     analytics.value = analyticsResponse.data;
+    
+    // Set admin info from session if available
+    admin.value = { 
+      username: 'Admin', 
+      email: 'admin@parkmate.com', 
+      id: 1 
+    };
     
   } catch (error) {
     console.error('Error loading admin data:', error);
+    console.error('Error response:', error.response?.data);
+    console.error('Error status:', error.response?.status);
+    
     // If admin is not authenticated, redirect to login
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 || error.response?.status === 403) {
       router.push('/login');
     }
   } finally {

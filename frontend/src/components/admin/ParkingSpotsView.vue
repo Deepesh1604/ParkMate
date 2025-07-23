@@ -13,19 +13,45 @@
       </select>
     </div>
 
-    <!-- Spots Grid -->
-    <div class="spots-grid">
-      <div 
-        v-for="spot in parkingSpots" 
-        :key="spot.id" 
-        :class="['spot-card', spot.status === 'O' ? 'occupied' : 'available']"
-        @click="viewSpotDetails(spot)"
-      >
-        <div class="spot-number">{{ spot.spot_number }}</div>
-        <div class="spot-status">
-          {{ spot.status === 'O' ? 'Occupied' : 'Available' }}
+    <!-- Spots organized by lots -->
+    <div v-if="selectedLot" class="lot-section">
+      <h3>{{ getLotName(selectedLot) }}</h3>
+      <div class="spots-grid">
+        <div 
+          v-for="spot in parkingSpots" 
+          :key="spot.id" 
+          :class="['spot-card', getSpotStatusClass(spot)]"
+          @click="viewSpotDetails(spot)"
+        >
+          <div class="spot-number">{{ spot.spot_number }}</div>
+          <div class="spot-status">
+            {{ getSpotStatusText(spot.status) }}
+          </div>
         </div>
-        <div class="lot-name">{{ spot.lot_name }}</div>
+      </div>
+    </div>
+
+    <!-- All lots with their spots -->
+    <div v-else class="all-lots-view">
+      <div v-for="lot in spotsGroupedByLot" :key="lot.id" class="lot-section">
+        <h3>{{ lot.name }} ({{ lot.spots.length }} spots)</h3>
+        <div class="lot-stats">
+          <span class="stat available">Available: {{ lot.availableCount }}</span>
+          <span class="stat occupied">Occupied: {{ lot.occupiedCount }}</span>
+        </div>
+        <div class="spots-grid">
+          <div 
+            v-for="spot in lot.spots" 
+            :key="spot.id" 
+            :class="['spot-card', getSpotStatusClass(spot)]"
+            @click="viewSpotDetails(spot)"
+          >
+            <div class="spot-number">{{ spot.spot_number }}</div>
+            <div class="spot-status">
+              {{ getSpotStatusText(spot.status) }}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -35,31 +61,61 @@
         <h3>Spot Details</h3>
         <p><strong>Spot Number:</strong> {{ selectedSpot.spot_number }}</p>
         <p><strong>Lot:</strong> {{ selectedSpot.lot_name }}</p>
-        <p><strong>Status:</strong> {{ selectedSpot.status === 'O' ? 'Occupied' : 'Available' }}</p>
+        <p><strong>Status:</strong> {{ getSpotStatusText(selectedSpot.status) }}</p>
         
         <div v-if="selectedSpot.status === 'O' && selectedSpot.reservation">
-          <h4>Vehicle Details</h4>
+          <h4>Current Reservation</h4>
           <p><strong>User:</strong> {{ selectedSpot.reservation.username }}</p>
           <p><strong>Email:</strong> {{ selectedSpot.reservation.email }}</p>
           <p><strong>Phone:</strong> {{ selectedSpot.reservation.phone }}</p>
           <p><strong>Parked At:</strong> {{ formatDateTime(selectedSpot.reservation.parking_timestamp) }}</p>
           <p><strong>Duration:</strong> {{ calculateDuration(selectedSpot.reservation.parking_timestamp) }}</p>
+          <p v-if="selectedSpot.reservation.parking_cost"><strong>Cost:</strong> ${{ selectedSpot.reservation.parking_cost }}</p>
         </div>
 
-        <button @click="closeModal">Close</button>
+        <div class="modal-actions">
+          <button @click="closeModal" class="btn-close">Close</button>
+          <button v-if="selectedSpot.status === 'O'" @click="freeSpot" class="btn-free">Mark as Free</button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import axios from 'axios';
 
 const parkingLots = ref([]);
 const parkingSpots = ref([]);
 const selectedLot = ref('');
 const selectedSpot = ref(null);
+
+const spotsGroupedByLot = computed(() => {
+  if (!parkingSpots.value.length) return [];
+  
+  const grouped = {};
+  parkingSpots.value.forEach(spot => {
+    if (!grouped[spot.lot_id]) {
+      grouped[spot.lot_id] = {
+        id: spot.lot_id,
+        name: spot.lot_name,
+        spots: [],
+        availableCount: 0,
+        occupiedCount: 0
+      };
+    }
+    grouped[spot.lot_id].spots.push(spot);
+    
+    if (spot.status === 'O') {
+      grouped[spot.lot_id].occupiedCount++;
+    } else {
+      grouped[spot.lot_id].availableCount++;
+    }
+  });
+  
+  return Object.values(grouped);
+});
 
 const loadParkingLots = async () => {
   try {
@@ -72,45 +128,25 @@ const loadParkingLots = async () => {
 
 const loadParkingSpots = async () => {
   try {
-    // This would need to be implemented in your backend
-    // For now, we'll create a mock endpoint or use existing data
-    const spotsResponse = await axios.get('/api/admin/parking-spots', {
-      params: { lot_id: selectedLot.value }
-    });
-    parkingSpots.value = spotsResponse.data.parking_spots;
+    const params = selectedLot.value ? { lot_id: selectedLot.value } : {};
+    const response = await axios.get('/api/admin/parking-spots', { params });
+    parkingSpots.value = response.data.parking_spots;
   } catch (error) {
     console.error('Error loading parking spots:', error);
-    // Mock data for demonstration
-    generateMockSpots();
   }
 };
 
-const generateMockSpots = () => {
-  const spots = [];
-  parkingLots.value.forEach(lot => {
-    for (let i = 1; i <= lot.maximum_number_of_spots; i++) {
-      spots.push({
-        id: `${lot.id}-${i}`,
-        spot_number: i,
-        lot_name: lot.prime_location_name,
-        status: Math.random() > 0.7 ? 'O' : 'A',
-        reservation: Math.random() > 0.7 ? {
-          username: 'user' + i,
-          email: `user${i}@example.com`,
-          phone: `+1234567890`,
-          parking_timestamp: new Date(Date.now() - Math.random() * 3600000).toISOString()
-        } : null
-      });
-    }
-  });
-  
-  if (selectedLot.value) {
-    parkingSpots.value = spots.filter(spot => 
-      parkingLots.value.find(lot => lot.id == selectedLot.value)?.prime_location_name === spot.lot_name
-    );
-  } else {
-    parkingSpots.value = spots;
-  }
+const getLotName = (lotId) => {
+  const lot = parkingLots.value.find(l => l.id == lotId);
+  return lot ? lot.prime_location_name : 'Unknown Lot';
+};
+
+const getSpotStatusClass = (spot) => {
+  return spot.status === 'O' ? 'occupied' : 'available';
+};
+
+const getSpotStatusText = (status) => {
+  return status === 'O' ? 'Occupied' : 'Available';
 };
 
 const viewSpotDetails = (spot) => {
@@ -136,6 +172,21 @@ const calculateDuration = (startTime) => {
   return `${diffHours}h ${diffMinutes}m`;
 };
 
+const freeSpot = async () => {
+  if (!selectedSpot.value) return;
+  
+  if (confirm('Are you sure you want to mark this spot as free?')) {
+    try {
+      await axios.patch(`/api/admin/parking-spots/${selectedSpot.value.id}/free`);
+      await loadParkingSpots();
+      selectedSpot.value = null;
+    } catch (error) {
+      console.error('Error freeing spot:', error);
+      alert('Error freeing the spot. Please try again.');
+    }
+  }
+};
+
 onMounted(() => {
   loadParkingLots().then(() => {
     loadParkingSpots();
@@ -147,6 +198,52 @@ onMounted(() => {
 .parking-spots-view h2 {
   margin-bottom: 2rem;
   color: #2c3e50;
+}
+
+.lot-section {
+  margin-bottom: 3rem;
+  padding: 1.5rem;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #dee2e6;
+}
+
+.lot-section h3 {
+  color: #2c3e50;
+  margin-bottom: 1rem;
+  margin-top: 0;
+  font-size: 1.3rem;
+}
+
+.lot-stats {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  background-color: white;
+  border-radius: 4px;
+  border: 1px solid #e9ecef;
+}
+
+.lot-stats .stat {
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.lot-stats .stat.available {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.lot-stats .stat.occupied {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.all-lots-view {
+  margin-top: 1rem;
 }
 
 .filter-section {
@@ -169,8 +266,9 @@ onMounted(() => {
 
 .spots-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
 }
 
 .spot-card {
@@ -181,46 +279,48 @@ onMounted(() => {
   text-align: center;
   cursor: pointer;
   transition: all 0.3s;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
 }
 
 .spot-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
 .spot-card.available {
-  border-color: #42b883;
-  background-color: #f0f9ff;
+  border-color: #28a745;
+  background-color: #d4edda;
 }
 
 .spot-card.occupied {
-  border-color: #e74c3c;
-  background-color: #fef2f2;
+  border-color: #dc3545;
+  background-color: #f8d7da;
 }
 
 .spot-number {
-  font-size: 1.5rem;
+  font-size: 1.3rem;
   font-weight: bold;
   color: #2c3e50;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.25rem;
 }
 
 .spot-status {
-  font-size: 0.9rem;
-  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .spot-card.available .spot-status {
-  color: #42b883;
+  color: #155724;
 }
 
 .spot-card.occupied .spot-status {
-  color: #e74c3c;
-}
-
-.lot-name {
-  font-size: 0.8rem;
-  color: #7f8c8d;
+  color: #721c24;
 }
 
 .modal-overlay {
@@ -257,35 +357,66 @@ onMounted(() => {
 }
 
 .modal-content p {
+color:#080808ff;
   margin: 0.5rem 0;
 }
 
 .modal-content button {
-  background-color: #42b883;
-  color: white;
   border: none;
   padding: 0.5rem 1rem;
   border-radius: 4px;
   cursor: pointer;
-  margin-top: 1rem;
+  margin: 0.25rem;
+  transition: background-color 0.3s;
 }
 
-.modal-content button:hover {
-  background-color: #38a169;
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+  justify-content: flex-end;
+}
+
+.btn-close {
+  background-color: #6c757d;
+  color: white;
+}
+
+.btn-close:hover {
+  background-color: #5a6268;
+}
+
+.btn-free {
+  background-color: #28a745;
+  color: white;
+}
+
+.btn-free:hover {
+  background-color: #218838;
 }
 
 @media (max-width: 768px) {
   .spots-grid {
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
     gap: 0.5rem;
   }
   
   .spot-card {
     padding: 0.75rem;
+    min-height: 70px;
   }
   
   .spot-number {
-    font-size: 1.2rem;
+    font-size: 1.1rem;
+  }
+  
+  .lot-section {
+    padding: 1rem;
+  }
+  
+  .lot-stats {
+    flex-direction: column;
+    gap: 0.5rem;
   }
 }
 </style>

@@ -43,7 +43,7 @@ redis_client = redis.Redis(
     port=6379, 
     db=0, 
     decode_responses=True,
-    socket_connect_timeout=5,
+    socket_connect_timeout=1000,
     socket_timeout=5
 )
 
@@ -858,8 +858,9 @@ def register():
         conn.commit()
         conn.close()
         
-        # Invalidate user-related caches
+        # Invalidate user-related caches and analytics
         invalidate_cache_pattern('*users*')
+        invalidate_cache_pattern('*admin*')
         
         return jsonify({
             'message': 'User registered successfully',
@@ -971,9 +972,9 @@ def admin_parking_lots():
             conn.commit()
             conn.close()
             
-            # Invalidate related caches
+            # Invalidate related caches and analytics
             invalidate_cache_pattern('*parking_lots*')
-            invalidate_cache_pattern('*analytics*')
+            invalidate_cache_pattern('*admin*')
             
             return jsonify({
                 'message': 'Parking lot created successfully',
@@ -983,6 +984,262 @@ def admin_parking_lots():
         except Exception as e:
             conn.close()
             return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/parking-lots/<int:lot_id>', methods=['PUT'])
+def update_parking_lot(lot_id):
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        data = request.json
+        location_name = data.get('prime_location_name')
+        price = data.get('price')
+        address = data.get('address')
+        pin_code = data.get('pin_code')
+        max_spots = data.get('maximum_number_of_spots')
+        
+        if not all([location_name, price, address, pin_code, max_spots]):
+            return jsonify({'error': 'All fields are required'}), 400
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if lot exists
+        cursor.execute('SELECT * FROM parking_lots WHERE id = ?', (lot_id,))
+        existing_lot = cursor.fetchone()
+        if not existing_lot:
+            conn.close()
+            return jsonify({'error': 'Parking lot not found'}), 404
+        
+        # Update parking lot
+        cursor.execute('''
+            UPDATE parking_lots 
+            SET prime_location_name = ?, price = ?, address = ?, pin_code = ?, maximum_number_of_spots = ?
+            WHERE id = ?
+        ''', (location_name, price, address, pin_code, max_spots, lot_id))
+        
+        # Get current spots count
+        cursor.execute('SELECT COUNT(*) as count FROM parking_spots WHERE lot_id = ?', (lot_id,))
+        current_spots_count = cursor.fetchone()[0]
+        
+        # Add or remove spots if needed
+        if max_spots > current_spots_count:
+            # Add new spots
+            for spot_num in range(current_spots_count + 1, max_spots + 1):
+                cursor.execute('''
+                    INSERT INTO parking_spots (lot_id, spot_number, status)
+                    VALUES (?, ?, 'A')
+                ''', (lot_id, spot_num))
+        elif max_spots < current_spots_count:
+            # Remove excess spots (only if they're not occupied)
+            cursor.execute('''
+                SELECT COUNT(*) as occupied FROM parking_spots 
+                WHERE lot_id = ? AND spot_number > ? AND status = 'O'
+            ''', (lot_id, max_spots))
+            occupied_excess = cursor.fetchone()[0]
+            
+            if occupied_excess > 0:
+                conn.close()
+                return jsonify({'error': 'Cannot reduce spots: some excess spots are occupied'}), 400
+            
+            cursor.execute('''
+                DELETE FROM parking_spots 
+                WHERE lot_id = ? AND spot_number > ?
+            ''', (lot_id, max_spots))
+        
+        conn.commit()
+        conn.close()
+        
+        # Invalidate related caches
+        invalidate_cache_pattern('*parking_lots*')
+        invalidate_cache_pattern('*admin*')
+        
+        return jsonify({'message': 'Parking lot updated successfully'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/parking-lots/<int:lot_id>', methods=['DELETE'])
+def delete_parking_lot(lot_id):
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if lot exists
+        cursor.execute('SELECT * FROM parking_lots WHERE id = ?', (lot_id,))
+        existing_lot = cursor.fetchone()
+        if not existing_lot:
+            conn.close()
+            return jsonify({'error': 'Parking lot not found'}), 404
+        
+        # Check if lot has any occupied spots
+        cursor.execute('SELECT COUNT(*) as occupied FROM parking_spots WHERE lot_id = ? AND status = "O"', (lot_id,))
+        occupied_spots = cursor.fetchone()[0]
+        
+        if occupied_spots > 0:
+            conn.close()
+            return jsonify({'error': 'Cannot delete lot: it has occupied spots'}), 400
+        
+        # Check if lot has any active reservations
+        cursor.execute('''
+            SELECT COUNT(*) as active_reservations 
+            FROM reservations r 
+            JOIN parking_spots ps ON r.spot_id = ps.id 
+            WHERE ps.lot_id = ? AND r.status = 'active'
+        ''', (lot_id,))
+        active_reservations = cursor.fetchone()[0]
+        
+        if active_reservations > 0:
+            conn.close()
+            return jsonify({'error': 'Cannot delete lot: it has active reservations'}), 400
+        
+        # Delete all spots first (foreign key constraint)
+        cursor.execute('DELETE FROM parking_spots WHERE lot_id = ?', (lot_id,))
+        
+        # Delete the parking lot
+        cursor.execute('DELETE FROM parking_lots WHERE id = ?', (lot_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        # Invalidate related caches
+        invalidate_cache_pattern('*parking_lots*')
+        invalidate_cache_pattern('*admin*')
+        
+        return jsonify({'message': 'Parking lot deleted successfully'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/parking-spots', methods=['GET'])
+def admin_parking_spots():
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        lot_id = request.args.get('lot_id')
+        
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        if lot_id:
+            # Get spots for specific lot
+            cursor.execute('''
+                SELECT 
+                    ps.id,
+                    ps.spot_number,
+                    ps.status,
+                    pl.id as lot_id,
+                    pl.prime_location_name as lot_name,
+                    r.id as reservation_id,
+                    r.parking_timestamp,
+                    r.parking_cost,
+                    u.username,
+                    u.email,
+                    u.phone
+                FROM parking_spots ps
+                JOIN parking_lots pl ON ps.lot_id = pl.id
+                LEFT JOIN reservations r ON ps.id = r.spot_id AND r.status = 'active'
+                LEFT JOIN users u ON r.user_id = u.id
+                WHERE pl.id = ?
+                ORDER BY ps.spot_number
+            ''', (lot_id,))
+        else:
+            # Get all spots
+            cursor.execute('''
+                SELECT 
+                    ps.id,
+                    ps.spot_number,
+                    ps.status,
+                    pl.id as lot_id,
+                    pl.prime_location_name as lot_name,
+                    r.id as reservation_id,
+                    r.parking_timestamp,
+                    r.parking_cost,
+                    u.username,
+                    u.email,
+                    u.phone
+                FROM parking_spots ps
+                JOIN parking_lots pl ON ps.lot_id = pl.id
+                LEFT JOIN reservations r ON ps.id = r.spot_id AND r.status = 'active'
+                LEFT JOIN users u ON r.user_id = u.id
+                ORDER BY pl.prime_location_name, ps.spot_number
+            ''')
+        
+        spots_data = cursor.fetchall()
+        conn.close()
+        
+        # Format the data
+        parking_spots = []
+        for spot in spots_data:
+            spot_data = {
+                'id': spot['id'],
+                'spot_number': spot['spot_number'],
+                'status': spot['status'],
+                'lot_id': spot['lot_id'],
+                'lot_name': spot['lot_name'],
+                'reservation': None
+            }
+            
+            if spot['reservation_id']:
+                spot_data['reservation'] = {
+                    'id': spot['reservation_id'],
+                    'username': spot['username'],
+                    'email': spot['email'],
+                    'phone': spot['phone'],
+                    'parking_timestamp': spot['parking_timestamp'],
+                    'parking_cost': spot['parking_cost']
+                }
+            
+            parking_spots.append(spot_data)
+        
+        return jsonify({'parking_spots': parking_spots}), 200
+        
+    except Exception as e:
+        logger.error(f"Error in admin_parking_spots: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/admin/parking-spots/<int:spot_id>/free', methods=['PATCH'])
+def free_parking_spot(spot_id):
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if spot exists
+        cursor.execute('SELECT * FROM parking_spots WHERE id = ?', (spot_id,))
+        spot = cursor.fetchone()
+        if not spot:
+            conn.close()
+            return jsonify({'error': 'Parking spot not found'}), 404
+        
+        # Update spot status to available
+        cursor.execute('UPDATE parking_spots SET status = ? WHERE id = ?', ('A', spot_id))
+        
+        # End any active reservations for this spot
+        cursor.execute('''
+            UPDATE reservations 
+            SET status = 'completed', end_timestamp = CURRENT_TIMESTAMP 
+            WHERE spot_id = ? AND status = 'active'
+        ''', (spot_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        # Invalidate related caches
+        invalidate_cache_pattern('*admin*')
+        
+        return jsonify({'message': 'Parking spot freed successfully'}), 200
+        
+    except Exception as e:
+        logger.error(f"Error freeing parking spot: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/admin/users', methods=['GET'])
 def admin_users():
@@ -1021,13 +1278,54 @@ def admin_users():
     users = get_users_with_stats()
     return jsonify({'users': users}), 200
 
+@app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
+def delete_user(user_id):
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if user exists and is not an admin
+        cursor.execute('SELECT id, username, is_admin FROM users WHERE id = ?', (user_id,))
+        user = cursor.fetchone()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        if user[2]:  # is_admin check
+            return jsonify({'error': 'Cannot delete admin users'}), 400
+        
+        # First, delete all reservations for this user
+        cursor.execute('DELETE FROM reservations WHERE user_id = ?', (user_id,))
+        
+        # Then delete the user
+        cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        # Clear cache to ensure updated data
+        try:
+            redis_client.delete('admin:users')
+            redis_client.delete('admin:analytics')
+        except:
+            pass  # Cache clearing is optional
+        
+        logger.info(f"Admin deleted user: {user[1]} (ID: {user_id})")
+        return jsonify({'message': 'User deleted successfully'}), 200
+        
+    except Exception as e:
+        logger.error(f"Error deleting user: {e}")
+        return jsonify({'error': 'Failed to delete user'}), 500
+
 @app.route('/api/admin/analytics', methods=['GET'])
 def admin_analytics():
     if not session.get('is_admin'):
         return jsonify({'error': 'Admin access required'}), 403
     
-    @cached(timeout=ANALYTICS_CACHE_TIMEOUT, key_prefix='admin')
-    def get_analytics():
+    try:
         conn = get_db()
         conn.row_factory = dict_factory
         cursor = conn.cursor()
@@ -1050,11 +1348,13 @@ def admin_analytics():
         
         # Revenue calculation
         cursor.execute('SELECT SUM(parking_cost) as total_revenue FROM reservations WHERE parking_cost IS NOT NULL')
-        total_revenue = cursor.fetchone()['total_revenue'] or 0
+        revenue_result = cursor.fetchone()
+        total_revenue = revenue_result['total_revenue'] if revenue_result['total_revenue'] else 0
         
         # Lot occupancy rates
         cursor.execute('''
             SELECT 
+                pl.id,
                 pl.prime_location_name,
                 pl.maximum_number_of_spots,
                 COUNT(ps.id) as total_spots,
@@ -1068,7 +1368,7 @@ def admin_analytics():
         
         conn.close()
         
-        return {
+        analytics_data = {
             'summary': {
                 'total_lots': total_lots,
                 'total_spots': total_spots,
@@ -1081,9 +1381,228 @@ def admin_analytics():
             },
             'lot_occupancy': lot_occupancy
         }
+        
+        logger.info(f"Analytics data: {analytics_data}")
+        return jsonify(analytics_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error in admin_analytics: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/admin/reports/weekly', methods=['GET'])
+def get_weekly_report():
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Admin access required'}), 403
     
-    analytics_data = get_analytics()
-    return jsonify(analytics_data), 200
+    try:
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        # Get data for the last 7 days
+        cursor.execute('''
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as reservations,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
+                SUM(CASE WHEN parking_cost IS NOT NULL THEN parking_cost ELSE 0 END) as revenue
+            FROM reservations 
+            WHERE created_at >= date('now', '-7 days')
+            GROUP BY DATE(created_at)
+            ORDER BY date
+        ''')
+        daily_data = cursor.fetchall()
+        
+        # Hourly distribution for today
+        cursor.execute('''
+            SELECT 
+                strftime('%H', created_at) as hour,
+                COUNT(*) as reservations
+            FROM reservations 
+            WHERE date(created_at) = date('now')
+            GROUP BY strftime('%H', created_at)
+            ORDER BY hour
+        ''')
+        hourly_data = cursor.fetchall()
+        
+        # User activity patterns
+        cursor.execute('''
+            SELECT 
+                u.username,
+                COUNT(r.id) as total_reservations,
+                SUM(CASE WHEN r.parking_cost IS NOT NULL THEN r.parking_cost ELSE 0 END) as total_spent,
+                MAX(r.created_at) as last_reservation
+            FROM users u
+            LEFT JOIN reservations r ON u.id = r.user_id
+            WHERE u.is_admin = 0 AND r.created_at >= date('now', '-7 days')
+            GROUP BY u.id
+            ORDER BY total_reservations DESC
+            LIMIT 10
+        ''')
+        top_users = cursor.fetchall()
+        
+        conn.close()
+        
+        return jsonify({
+            'daily_data': daily_data,
+            'hourly_data': hourly_data,
+            'top_users': top_users
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in weekly report: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/admin/reports/monthly', methods=['GET'])
+def get_monthly_report():
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        # Monthly trends for last 6 months
+        cursor.execute('''
+            SELECT 
+                strftime('%Y-%m', created_at) as month,
+                COUNT(*) as reservations,
+                SUM(CASE WHEN parking_cost IS NOT NULL THEN parking_cost ELSE 0 END) as revenue,
+                COUNT(DISTINCT user_id) as unique_users
+            FROM reservations 
+            WHERE created_at >= date('now', '-6 months')
+            GROUP BY strftime('%Y-%m', created_at)
+            ORDER BY month
+        ''')
+        monthly_trends = cursor.fetchall()
+        
+        # Lot performance
+        cursor.execute('''
+            SELECT 
+                pl.prime_location_name,
+                COUNT(r.id) as total_reservations,
+                SUM(CASE WHEN r.parking_cost IS NOT NULL THEN r.parking_cost ELSE 0 END) as total_revenue,
+                AVG(CASE WHEN r.parking_cost IS NOT NULL THEN r.parking_cost ELSE 0 END) as avg_revenue_per_reservation
+            FROM parking_lots pl
+            LEFT JOIN parking_spots ps ON pl.id = ps.lot_id
+            LEFT JOIN reservations r ON ps.id = r.spot_id
+            WHERE r.created_at >= date('now', '-1 month')
+            GROUP BY pl.id
+            ORDER BY total_revenue DESC
+        ''')
+        lot_performance = cursor.fetchall()
+        
+        conn.close()
+        
+        return jsonify({
+            'monthly_trends': monthly_trends,
+            'lot_performance': lot_performance
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in monthly report: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/admin/reports/daily-simple', methods=['GET'])
+def get_daily_simple_report():
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        # Get today's data
+        today = datetime.now().date()
+        
+        # Today's reservations
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as total_reservations_today,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_today,
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_today,
+                SUM(CASE WHEN parking_cost IS NOT NULL THEN parking_cost ELSE 0 END) as revenue_today
+            FROM reservations 
+            WHERE date(created_at) = date('now')
+        ''')
+        today_stats = cursor.fetchone()
+        
+        # This week's simple data (last 7 days available)
+        cursor.execute('''
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as reservations
+            FROM reservations 
+            WHERE created_at >= date('now', '-7 days')
+            GROUP BY DATE(created_at)
+            ORDER BY date DESC
+        ''')
+        available_days = cursor.fetchall()
+        
+        # Current reservation status
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as total_active_reservations,
+                COUNT(DISTINCT user_id) as unique_active_users
+            FROM reservations 
+            WHERE status = 'active'
+        ''')
+        current_status = cursor.fetchone()
+        
+        conn.close()
+        
+        return jsonify({
+            'today': today_stats,
+            'available_days': available_days,
+            'current_status': current_status,
+            'has_data': len(available_days) > 0 or today_stats['total_reservations_today'] > 0
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in daily simple report: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+# Test endpoint to check database connectivity
+@app.route('/api/admin/test', methods=['GET'])
+def admin_test():
+    if not session.get('is_admin'):
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Test database connectivity
+        cursor.execute('SELECT COUNT(*) as count FROM parking_lots')
+        lots_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) as count FROM parking_spots')
+        spots_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) as count FROM users')
+        users_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) as count FROM reservations')
+        reservations_count = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return jsonify({
+            'status': 'Database connection successful',
+            'counts': {
+                'parking_lots': lots_count,
+                'parking_spots': spots_count,
+                'users': users_count,
+                'reservations': reservations_count
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in admin_test: {e}")
+        return jsonify({'error': str(e)}), 500
 
 # Batch Job Management APIs
 @app.route('/api/admin/batch-jobs', methods=['GET', 'POST'])
@@ -1350,10 +1869,10 @@ def trigger_monthly_report():
 # Enhanced User APIs with caching
 @app.route('/api/user/parking-lots', methods=['GET'])
 def user_parking_lots():
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
+    # Allow viewing parking lots without authentication
+    # Authentication will be required for reservations
     
-    @cached(timeout=CACHE_TIMEOUT, key_prefix='user')
+    @cached(timeout=CACHE_TIMEOUT, key_prefix='user:parking_lots')
     def get_user_parking_lots():
         conn = get_db()
         conn.row_factory = dict_factory
@@ -1361,13 +1880,17 @@ def user_parking_lots():
         
         cursor.execute('''
             SELECT 
-                pl.*,
+                pl.id,
+                pl.prime_location_name,
+                pl.price,
+                pl.address,
+                pl.pin_code,
+                pl.maximum_number_of_spots,
                 COUNT(ps.id) as total_spots,
                 SUM(CASE WHEN ps.status = 'A' THEN 1 ELSE 0 END) as available_spots
             FROM parking_lots pl
             LEFT JOIN parking_spots ps ON pl.id = ps.lot_id
-            GROUP BY pl.id
-            HAVING available_spots > 0
+            GROUP BY pl.id, pl.prime_location_name, pl.price, pl.address, pl.pin_code, pl.maximum_number_of_spots
             ORDER BY pl.prime_location_name
         ''')
         
@@ -1378,6 +1901,51 @@ def user_parking_lots():
     lots = get_user_parking_lots()
     return jsonify({'parking_lots': lots}), 200
 
+@app.route('/api/user/parking-lots/<int:lot_id>/spots', methods=['GET'])
+def user_parking_lot_spots(lot_id):
+    """Get available spots for a specific parking lot"""
+    try:
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        # First check if the lot exists
+        cursor.execute('SELECT * FROM parking_lots WHERE id = ?', (lot_id,))
+        lot = cursor.fetchone()
+        
+        if not lot:
+            conn.close()
+            return jsonify({'error': 'Parking lot not found'}), 404
+        
+        # Get all spots for this lot with their status
+        cursor.execute('''
+            SELECT 
+                ps.id,
+                ps.spot_number,
+                ps.status,
+                CASE 
+                    WHEN ps.status = 'A' THEN 'available'
+                    WHEN ps.status = 'O' THEN 'occupied'
+                    ELSE 'unknown'
+                END as status_text
+            FROM parking_spots ps
+            WHERE ps.lot_id = ?
+            ORDER BY ps.spot_number
+        ''', (lot_id,))
+        
+        spots = cursor.fetchall()
+        conn.close()
+        
+        return jsonify({
+            'lot': lot,
+            'spots': spots,
+            'total_spots': len(spots),
+            'available_spots': len([s for s in spots if s['status'] == 'A'])
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/user/reserve-spot', methods=['POST'])
 def user_reserve_spot():
     if not session.get('user_id') or session.get('is_admin'):
@@ -1386,9 +1954,10 @@ def user_reserve_spot():
     try:
         data = request.json
         lot_id = data.get('lot_id')
+        spot_id = data.get('spot_id')
         
-        if not lot_id:
-            return jsonify({'error': 'Lot ID is required'}), 400
+        if not lot_id and not spot_id:
+            return jsonify({'error': 'Either lot_id or spot_id is required'}), 400
         
         conn = get_db()
         conn.row_factory = dict_factory
@@ -1405,17 +1974,34 @@ def user_reserve_spot():
             conn.close()
             return jsonify({'error': 'You already have an active reservation'}), 400
         
-        # Find first available spot in the lot
-        cursor.execute('''
-            SELECT id FROM parking_spots 
-            WHERE lot_id = ? AND status = 'A' 
-            ORDER BY spot_number LIMIT 1
-        ''', (lot_id,))
-        
-        spot = cursor.fetchone()
-        if not spot:
-            conn.close()
-            return jsonify({'error': 'No available spots in this parking lot'}), 400
+        # Find the spot to reserve
+        if spot_id:
+            # Reserve specific spot
+            cursor.execute('''
+                SELECT id, lot_id, spot_number, status FROM parking_spots 
+                WHERE id = ?
+            ''', (spot_id,))
+            spot = cursor.fetchone()
+            
+            if not spot:
+                conn.close()
+                return jsonify({'error': 'Parking spot not found'}), 404
+                
+            if spot['status'] != 'A':
+                conn.close()
+                return jsonify({'error': 'This parking spot is not available'}), 400
+        else:
+            # Find first available spot in the lot
+            cursor.execute('''
+                SELECT id, lot_id, spot_number, status FROM parking_spots 
+                WHERE lot_id = ? AND status = 'A' 
+                ORDER BY spot_number LIMIT 1
+            ''', (lot_id,))
+            
+            spot = cursor.fetchone()
+            if not spot:
+                conn.close()
+                return jsonify({'error': 'No available spots in this parking lot'}), 400
         
         # Create reservation
         cursor.execute('''
@@ -1723,6 +2309,33 @@ def user_analytics():
     
     analytics_data = get_user_analytics()
     return jsonify(analytics_data), 200
+
+@app.route('/api/user/profile', methods=['GET'])
+def user_profile():
+    if not session.get('user_id') or session.get('is_admin'):
+        return jsonify({'error': 'User access required'}), 403
+    
+    try:
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, username, email, phone, created_at
+            FROM users 
+            WHERE id = ?
+        ''', (session['user_id'],))
+        
+        user = cursor.fetchone()
+        conn.close()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        return jsonify(user), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # Cache management endpoints
 @app.route('/api/admin/cache/stats', methods=['GET'])

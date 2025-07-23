@@ -1,6 +1,14 @@
 <template>
   <div class="admin-overview">
-    <h2>Dashboard Overview</h2>
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <h2>Dashboard Overview</h2>
+      <button @click="$emit('refresh')" class="refresh-btn" title="Refresh Stats">🔄 Refresh</button>
+    </div>
+    
+    <!-- Debug info -->
+    <div v-if="!analytics || !analytics.summary" class="debug-info">
+      <p>Analytics data: {{ JSON.stringify(analytics) }}</p>
+    </div>
     
     <div class="stats-grid">
       <div class="stat-card">
@@ -95,7 +103,9 @@
 </template>
 
 <script setup>
-import { defineProps } from 'vue';
+import { defineProps, defineEmits, watch } from 'vue';
+
+defineEmits(['refresh']);
 
 const props = defineProps({
   analytics: {
@@ -103,12 +113,28 @@ const props = defineProps({
     default: () => ({})
   }
 });
+
+// Debug: Watch analytics changes
+watch(() => props.analytics, (newVal) => {
+  console.log('Analytics data received:', newVal);
+}, { immediate: true, deep: true });
 </script>
 
 <style scoped>
 .admin-overview h2 {
   margin-bottom: 2rem;
   color: #2c3e50;
+}
+
+.debug-info {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  font-family: monospace;
+  font-size: 0.875rem;
+  color: #6c757d;
 }
 
 .stats-grid {
@@ -226,3 +252,19 @@ const props = defineProps({
   }
 }
 </style>
+
+/* Add refresh button styles */
+.refresh-btn {
+  background: #42b883;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.2s;
+  margin-left: 1rem;
+}
+.refresh-btn:hover {
+  background: #369870;
+}
