@@ -62,7 +62,7 @@
       <div class="stat-card">
         <div class="stat-icon">💰</div>
         <div class="stat-content">
-          <h3>${{ analytics.summary?.total_revenue || 0 }}</h3>
+          <h3>${{( analytics.summary?.total_revenue || 0 ).toFixed(2)}}</h3>
           <p>Total Revenue</p>
         </div>
       </div>

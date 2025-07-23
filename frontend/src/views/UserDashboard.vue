@@ -28,7 +28,7 @@
     <div class="dashboard-content">
       <!-- Overview Tab -->
       <div v-if="activeTab === 'overview'" class="tab-content">
-        <UserOverview :analytics="userAnalytics" @change-tab="activeTab = $event" />
+        <UserOverview @change-tab="activeTab = $event" />
       </div>
 
       <!-- Parking Lots Tab -->
@@ -68,7 +68,6 @@ import ParkingHistory from '../components/user/ParkingHistory.vue';
 const router = useRouter();
 const activeTab = ref('overview');
 const user = ref({ username: '', email: '', id: null });
-const userAnalytics = ref({});
 const loading = ref(true);
 
 const tabs = [
@@ -86,10 +85,6 @@ const loadUserData = async () => {
     // Fetch current user profile
     const userResponse = await axios.get('/api/user/profile');
     user.value = userResponse.data;
-    
-    // Fetch user analytics
-    const analyticsResponse = await axios.get('/api/user/analytics');
-    userAnalytics.value = analyticsResponse.data;
     
   } catch (error) {
     console.error('Error loading user data:', error);

@@ -2,30 +2,13 @@
   <div class="my-reservations">
     <h2>My Reservations</h2>
     
-    <!-- Loading State -->
-    <div v-if="loading" class="loading">
-      <div class="spinner"></div>
-      <p>Loading your reservations...</p>
-    </div>
-    
-    <!-- Error State -->
-    <div v-else-if="error" class="error">
-      <p>{{ error }}</p>
-      <div v-if="error.includes('log in')" class="auth-actions">
-        <router-link to="/login" class="login-link">Go to Login</router-link>
-      </div>
-      <button v-else @click="loadReservations" class="retry-btn">Try Again</button>
-    </div>
-    
-    <!-- No Reservations -->
-    <div v-else-if="reservations.length === 0" class="no-reservations">
+    <div v-if="reservations.length === 0" class="no-reservations">
       <p>You don't have any reservations yet.</p>
       <button @click="$emit('change-tab', 'parking-lots')" class="find-parking-btn">
         Find Parking
       </button>
     </div>
 
-    <!-- Reservations List -->
     <div v-else class="reservations-list">
       <div v-for="reservation in reservations" :key="reservation.id" class="reservation-card">
         <div class="reservation-header">
@@ -80,31 +63,13 @@ import axios from 'axios';
 
 const emit = defineEmits(['change-tab', 'refresh']);
 const reservations = ref([]);
-const loading = ref(false);
-const error = ref(null);
 
 const loadReservations = async () => {
   try {
-    loading.value = true;
-    error.value = null;
-    
-    console.log('Loading reservations...');
     const response = await axios.get('/api/user/my-reservations');
-    console.log('Reservations response:', response.data);
-    
-    reservations.value = response.data.reservations || [];
-  } catch (err) {
-    console.error('Error loading reservations:', err);
-    
-    if (err.response?.status === 403) {
-      error.value = 'Please log in to view your reservations.';
-    } else {
-      error.value = err.response?.data?.error || 'Failed to load reservations. Please try again.';
-    }
-    
-    reservations.value = [];
-  } finally {
-    loading.value = false;
+    reservations.value = response.data.reservations;
+  } catch (error) {
+    console.error('Error loading reservations:', error);
   }
 };
 
@@ -155,72 +120,6 @@ onMounted(() => {
 .my-reservations h2 {
   margin-bottom: 2rem;
   color: #2c3e50;
-}
-
-/* Loading State */
-.loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 3rem;
-  text-align: center;
-  color: #6c757d;
-}
-
-.spinner {
-  width: 40px;
-  height: 40px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #42b883;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 1rem;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-/* Error State */
-.error {
-  text-align: center;
-  padding: 3rem;
-  color: #e74c3c;
-}
-
-.retry-btn {
-  background-color: #e74c3c;
-  color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
-  cursor: pointer;
-  margin-top: 1rem;
-}
-
-.retry-btn:hover {
-  background-color: #c0392b;
-}
-
-.auth-actions {
-  margin-top: 1rem;
-}
-
-.login-link {
-  background-color: #42b883;
-  color: white;
-  text-decoration: none;
-  padding: 0.75rem 1.5rem;
-  border-radius: 8px;
-  display: inline-block;
-  font-weight: bold;
-  transition: background-color 0.3s;
-}
-
-.login-link:hover {
-  background-color: #369870;
 }
 
 .no-reservations {

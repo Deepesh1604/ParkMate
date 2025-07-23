@@ -43,7 +43,7 @@ redis_client = redis.Redis(
     port=6379, 
     db=0, 
     decode_responses=True,
-    socket_connect_timeout=1000,
+    socket_connect_timeout=5,
     socket_timeout=5
 )
 
@@ -1869,10 +1869,10 @@ def trigger_monthly_report():
 # Enhanced User APIs with caching
 @app.route('/api/user/parking-lots', methods=['GET'])
 def user_parking_lots():
-    # Allow viewing parking lots without authentication
-    # Authentication will be required for reservations
+    if not session.get('user_id') or session.get('is_admin'):
+        return jsonify({'error': 'User access required'}), 403
     
-    @cached(timeout=CACHE_TIMEOUT, key_prefix='user:parking_lots')
+    @cached(timeout=CACHE_TIMEOUT, key_prefix='user')
     def get_user_parking_lots():
         conn = get_db()
         conn.row_factory = dict_factory
@@ -1880,17 +1880,13 @@ def user_parking_lots():
         
         cursor.execute('''
             SELECT 
-                pl.id,
-                pl.prime_location_name,
-                pl.price,
-                pl.address,
-                pl.pin_code,
-                pl.maximum_number_of_spots,
+                pl.*,
                 COUNT(ps.id) as total_spots,
                 SUM(CASE WHEN ps.status = 'A' THEN 1 ELSE 0 END) as available_spots
             FROM parking_lots pl
             LEFT JOIN parking_spots ps ON pl.id = ps.lot_id
-            GROUP BY pl.id, pl.prime_location_name, pl.price, pl.address, pl.pin_code, pl.maximum_number_of_spots
+            GROUP BY pl.id
+            HAVING available_spots > 0
             ORDER BY pl.prime_location_name
         ''')
         
@@ -1901,51 +1897,6 @@ def user_parking_lots():
     lots = get_user_parking_lots()
     return jsonify({'parking_lots': lots}), 200
 
-@app.route('/api/user/parking-lots/<int:lot_id>/spots', methods=['GET'])
-def user_parking_lot_spots(lot_id):
-    """Get available spots for a specific parking lot"""
-    try:
-        conn = get_db()
-        conn.row_factory = dict_factory
-        cursor = conn.cursor()
-        
-        # First check if the lot exists
-        cursor.execute('SELECT * FROM parking_lots WHERE id = ?', (lot_id,))
-        lot = cursor.fetchone()
-        
-        if not lot:
-            conn.close()
-            return jsonify({'error': 'Parking lot not found'}), 404
-        
-        # Get all spots for this lot with their status
-        cursor.execute('''
-            SELECT 
-                ps.id,
-                ps.spot_number,
-                ps.status,
-                CASE 
-                    WHEN ps.status = 'A' THEN 'available'
-                    WHEN ps.status = 'O' THEN 'occupied'
-                    ELSE 'unknown'
-                END as status_text
-            FROM parking_spots ps
-            WHERE ps.lot_id = ?
-            ORDER BY ps.spot_number
-        ''', (lot_id,))
-        
-        spots = cursor.fetchall()
-        conn.close()
-        
-        return jsonify({
-            'lot': lot,
-            'spots': spots,
-            'total_spots': len(spots),
-            'available_spots': len([s for s in spots if s['status'] == 'A'])
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/user/reserve-spot', methods=['POST'])
 def user_reserve_spot():
     if not session.get('user_id') or session.get('is_admin'):
@@ -1954,10 +1905,9 @@ def user_reserve_spot():
     try:
         data = request.json
         lot_id = data.get('lot_id')
-        spot_id = data.get('spot_id')
         
-        if not lot_id and not spot_id:
-            return jsonify({'error': 'Either lot_id or spot_id is required'}), 400
+        if not lot_id:
+            return jsonify({'error': 'Lot ID is required'}), 400
         
         conn = get_db()
         conn.row_factory = dict_factory
@@ -1974,34 +1924,17 @@ def user_reserve_spot():
             conn.close()
             return jsonify({'error': 'You already have an active reservation'}), 400
         
-        # Find the spot to reserve
-        if spot_id:
-            # Reserve specific spot
-            cursor.execute('''
-                SELECT id, lot_id, spot_number, status FROM parking_spots 
-                WHERE id = ?
-            ''', (spot_id,))
-            spot = cursor.fetchone()
-            
-            if not spot:
-                conn.close()
-                return jsonify({'error': 'Parking spot not found'}), 404
-                
-            if spot['status'] != 'A':
-                conn.close()
-                return jsonify({'error': 'This parking spot is not available'}), 400
-        else:
-            # Find first available spot in the lot
-            cursor.execute('''
-                SELECT id, lot_id, spot_number, status FROM parking_spots 
-                WHERE lot_id = ? AND status = 'A' 
-                ORDER BY spot_number LIMIT 1
-            ''', (lot_id,))
-            
-            spot = cursor.fetchone()
-            if not spot:
-                conn.close()
-                return jsonify({'error': 'No available spots in this parking lot'}), 400
+        # Find first available spot in the lot
+        cursor.execute('''
+            SELECT id FROM parking_spots 
+            WHERE lot_id = ? AND status = 'A' 
+            ORDER BY spot_number LIMIT 1
+        ''', (lot_id,))
+        
+        spot = cursor.fetchone()
+        if not spot:
+            conn.close()
+            return jsonify({'error': 'No available spots in this parking lot'}), 400
         
         # Create reservation
         cursor.execute('''
@@ -2309,33 +2242,6 @@ def user_analytics():
     
     analytics_data = get_user_analytics()
     return jsonify(analytics_data), 200
-
-@app.route('/api/user/profile', methods=['GET'])
-def user_profile():
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
-    
-    try:
-        conn = get_db()
-        conn.row_factory = dict_factory
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT id, username, email, phone, created_at
-            FROM users 
-            WHERE id = ?
-        ''', (session['user_id'],))
-        
-        user = cursor.fetchone()
-        conn.close()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        return jsonify(user), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 # Cache management endpoints
 @app.route('/api/admin/cache/stats', methods=['GET'])
