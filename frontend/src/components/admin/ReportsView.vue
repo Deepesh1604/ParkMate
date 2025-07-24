@@ -1,1951 +1,219 @@
 <template>
   <div class="reports-view">
-    <div class="reports-header">
-      <h2>📊 Analytics & Reports</h2>
-      <div class="refresh-section">
-        <button @click="refreshAllData" class="refresh-btn" :disabled="loading">
-          <span v-if="loading">🔄 Refreshing...</span>
-          <span v-else>🔄 Refresh Data</span>
-        </button>
-      </div>
+    <h1>🔬 Overall Insights</h1>
+    
+    
+    <div class="button-group">
+     
+      <button @click="loadAllGraphs" :disabled="loading">Load All Graphs</button>
+      <button @click="clearGraphs" :disabled="loading">Clear Graphs</button>
     </div>
-
-    <!-- Loading State -->
-    <div v-if="loading" class="loading-container">
-      <div class="spinner"></div>
-      <p>Loading analytics data...</p>
+    
+    <div id="status" v-html="generalStatus"></div>
+    
+    <div class="graph-container">
+      <h3>📊 Occupancy Analysis</h3>
+      <div class="status" v-html="graphs.occupancy.status"></div>
+      <div class="graph-content" v-html="graphs.occupancy.content"></div>
     </div>
-
-    <!-- Error State -->
-    <div v-else-if="error" class="error-container">
-      <div class="error-icon">⚠️</div>
-      <p>{{ error }}</p>
-      <button @click="refreshAllData" class="retry-btn">Try Again</button>
+    
+    <div class="graph-container">
+      <h3>💰 Revenue Analysis</h3>
+      <div class="status" v-html="graphs.revenue.status"></div>
+      <div class="graph-content" v-html="graphs.revenue.content"></div>
     </div>
-
-    <!-- Main Content -->
-    <div v-else class="reports-content">
-      <!-- Debug Panel (temporary) -->
-      <div class="debug-panel" v-if="true">
-        <h3>🔧 Debug Information</h3>
-        <div class="debug-info">
-          <p><strong>Analytics loaded:</strong> {{ Object.keys(analytics).length > 0 ? 'Yes' : 'No' }}</p>
-          <p><strong>Session status:</strong> {{ analytics.summary ? 'Authenticated' : 'Unknown' }}</p>
-          <p><strong>Matplotlib graphs status:</strong></p>
-          <ul>
-            <li>Occupancy: {{ matplotlibGraphs.occupancy.loading ? 'Loading...' : matplotlibGraphs.occupancy.error ? 'Error: ' + matplotlibGraphs.occupancy.error : matplotlibGraphs.occupancy.data ? 'Loaded' : 'Not loaded' }}</li>
-            <li>Revenue: {{ matplotlibGraphs.revenue.loading ? 'Loading...' : matplotlibGraphs.revenue.error ? 'Error: ' + matplotlibGraphs.revenue.error : matplotlibGraphs.revenue.data ? 'Loaded' : 'Not loaded' }}</li>
-            <li>Usage: {{ matplotlibGraphs.usage.loading ? 'Loading...' : matplotlibGraphs.usage.error ? 'Error: ' + matplotlibGraphs.usage.error : matplotlibGraphs.usage.data ? 'Loaded' : 'Not loaded' }}</li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- Summary Cards -->
-      <div class="summary-cards">
-        <div class="card">
-          <div class="card-icon">🚗</div>
-          <div class="card-content">
-            <h3>{{ analytics.summary?.total_spots || 0 }}</h3>
-            <p>Total Parking Spots</p>
-            <small>{{ analytics.summary?.occupancy_rate || 0 }}% Occupied</small>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-icon">👥</div>
-          <div class="card-content">
-            <h3>{{ analytics.summary?.total_users || 0 }}</h3>
-            <p>Registered Users</p>
-            <small>{{ analytics.summary?.active_reservations || 0 }} Active</small>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-icon">💰</div>
-          <div class="card-content">
-            <h3>${{ analytics.summary?.total_revenue || 0 }}</h3>
-            <p>Total Revenue</p>
-            <small>All time earnings</small>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-icon">📍</div>
-          <div class="card-content">
-            <h3>{{ analytics.summary?.total_lots || 0 }}</h3>
-            <p>Parking Lots</p>
-            <small>{{ analytics.summary?.available_spots || 0 }} Available</small>
-          </div>
-        </div>
-      </div>
-
-      <!-- Parking Lots/Spots Summary Charts -->
-      <div class="summary-charts-section">
-        <div class="section-header">
-          <h3>🏢 Parking Lots & Spots Overview</h3>
-          <p>Detailed analytics of parking infrastructure and utilization</p>
-        </div>
-        
-        <div class="summary-charts-grid">
-          <!-- Spots Distribution by Lot -->
-          <div class="summary-chart-container">
-            <div class="chart-header">
-              <h4>🎯 Spots Distribution by Lot</h4>
-              <p>Total capacity breakdown across all parking lots</p>
-            </div>
-            <canvas ref="spotsDistributionChart" class="chart"></canvas>
-          </div>
-
-          <!-- Occupancy Status Overview -->
-          <div class="summary-chart-container">
-            <div class="chart-header">
-              <h4>📊 Current Occupancy Status</h4>
-              <p>Real-time view of occupied vs available spots</p>
-            </div>
-            <canvas ref="occupancyStatusChart" class="chart"></canvas>
-          </div>
-
-          <!-- Lot Performance Metrics -->
-          <div class="summary-chart-container">
-            <div class="chart-header">
-              <h4>⭐ Lot Performance Ranking</h4>
-              <p>Ranking by utilization rate and efficiency</p>
-            </div>
-            <canvas ref="lotPerformanceRankingChart" class="chart"></canvas>
-          </div>
-
-          <!-- Spots Type Distribution -->
-          <div class="summary-chart-container">
-            <div class="chart-header">
-              <h4>🚗 Spot Types & Availability</h4>
-              <p>Distribution of different parking spot categories</p>
-            </div>
-            <canvas ref="spotTypesChart" class="chart"></canvas>
-          </div>
-        </div>
-      </div>
-
-      <!-- Charts Grid -->
-      <div class="charts-grid">
-        <!-- Matplotlib Real-time Graphs -->
-        <div class="chart-container full-width">
-          <div class="chart-header">
-            <h3>🎯 Real-time Parking Analytics (Matplotlib)</h3>
-            <p>Live generated graphs with current parking data</p>
-          </div>
-          <div class="matplotlib-graphs">
-            <div class="graph-section">
-              <h4>📊 Occupancy Analysis</h4>
-              <div v-if="matplotlibGraphs.occupancy.loading" class="graph-loading">
-                <div class="spinner"></div>
-                <p>Generating occupancy graph...</p>
-              </div>
-              <div v-else-if="matplotlibGraphs.occupancy.error" class="graph-error">
-                <p>{{ matplotlibGraphs.occupancy.error }}</p>
-                <button @click="loadMatplotlibGraph('occupancy')" class="retry-btn">Retry</button>
-              </div>
-              <div v-else-if="matplotlibGraphs.occupancy.data" class="graph-container">
-                <img :src="`data:image/png;base64,${matplotlibGraphs.occupancy.data.graph}`" 
-                     alt="Occupancy Analysis Graph" class="matplotlib-graph">
-                <div class="graph-summary">
-                  <div class="summary-item">
-                    <strong>Total Spots:</strong> {{ matplotlibGraphs.occupancy.data.summary?.total_spots || 0 }}
-                  </div>
-                  <div class="summary-item">
-                    <strong>Occupied:</strong> {{ matplotlibGraphs.occupancy.data.summary?.total_occupied || 0 }}
-                  </div>
-                  <div class="summary-item">
-                    <strong>Available:</strong> {{ matplotlibGraphs.occupancy.data.summary?.total_available || 0 }}
-                  </div>
-                  <div class="summary-item">
-                    <strong>Overall Occupancy:</strong> {{ matplotlibGraphs.occupancy.data.summary?.overall_occupancy || 0 }}%
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <div class="graph-section">
-              <h4>💰 Revenue Analysis</h4>
-              <div v-if="matplotlibGraphs.revenue.loading" class="graph-loading">
-                <div class="spinner"></div>
-                <p>Generating revenue graph...</p>
-              </div>
-              <div v-else-if="matplotlibGraphs.revenue.error" class="graph-error">
-                <p>{{ matplotlibGraphs.revenue.error }}</p>
-                <button @click="loadMatplotlibGraph('revenue')" class="retry-btn">Retry</button>
-              </div>
-              <div v-else-if="matplotlibGraphs.revenue.data" class="graph-container">
-                <img :src="`data:image/png;base64,${matplotlibGraphs.revenue.data.graph}`" 
-                     alt="Revenue Analysis Graph" class="matplotlib-graph">
-                <div class="graph-summary">
-                  <div class="summary-item">
-                    <strong>Total Revenue:</strong> ${{ matplotlibGraphs.revenue.data.summary?.total_revenue || 0 }}
-                  </div>
-                  <div class="summary-item">
-                    <strong>Avg Daily Revenue:</strong> ${{ matplotlibGraphs.revenue.data.summary?.avg_daily_revenue || 0 }}
-                  </div>
-                  <div class="summary-item">
-                    <strong>Total Reservations:</strong> {{ matplotlibGraphs.revenue.data.summary?.total_reservations || 0 }}
-                  </div>
-                  <div class="summary-item">
-                    <strong>Avg Daily Reservations:</strong> {{ matplotlibGraphs.revenue.data.summary?.avg_daily_reservations || 0 }}
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <div class="graph-section">
-              <h4>📈 Usage Patterns</h4>
-              <div v-if="matplotlibGraphs.usage.loading" class="graph-loading">
-                <div class="spinner"></div>
-                <p>Generating usage graph...</p>
-              </div>
-              <div v-else-if="matplotlibGraphs.usage.error" class="graph-error">
-                <p>{{ matplotlibGraphs.usage.error }}</p>
-                <button @click="loadMatplotlibGraph('usage')" class="retry-btn">Retry</button>
-              </div>
-              <div v-else-if="matplotlibGraphs.usage.data" class="graph-container">
-                <img :src="`data:image/png;base64,${matplotlibGraphs.usage.data.graph}`" 
-                     alt="Usage Patterns Graph" class="matplotlib-graph">
-                <div class="graph-summary">
-                  <div class="summary-item">
-                    <strong>Peak Hour:</strong> {{ matplotlibGraphs.usage.data.summary?.peak_hour || 'N/A' }}
-                  </div>
-                  <div class="summary-item">
-                    <strong>Active Users:</strong> {{ matplotlibGraphs.usage.data.summary?.total_active_users || 0 }}
-                  </div>
-                  <div class="summary-item">
-                    <strong>Avg Hourly Reservations:</strong> {{ matplotlibGraphs.usage.data.summary?.avg_hourly_reservations || 0 }}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Chart.js Interactive Charts -->
-        <div class="chart-container">
-          <div class="chart-header">
-            <h3>🎯 Lot Occupancy Rates</h3>
-            <p>Real-time occupancy across all parking lots</p>
-          </div>
-          <canvas ref="occupancyChart" class="chart"></canvas>
-        </div>
-
-        <!-- Weekly Trends -->
-        <div class="chart-container">
-          <div class="chart-header">
-            <h3>📈 Available Day Trends</h3>
-            <p v-if="weeklyData.daily_data?.length">Daily reservations and revenue for the past week</p>
-            <p v-else-if="dailySimple.available_days?.length" class="fallback-message">
-              Showing {{ dailySimple.available_days.length }} days of available data
-            </p>
-            <p v-else class="no-data-message">No reservation data available yet</p>
-          </div>
-          <canvas ref="weeklyChart" class="chart"></canvas>
-        </div>
-
-        <!-- Hourly Distribution -->
-        <div class="chart-container">
-          <div class="chart-header">
-            <h3>⏰ Today's Hourly Activity</h3>
-            <p v-if="weeklyData.hourly_data?.length">Reservation patterns throughout the day</p>
-            <p v-else class="no-data-message">No hourly data available - no reservations made today</p>
-          </div>
-          <canvas ref="hourlyChart" class="chart"></canvas>
-        </div>
-
-        <!-- Top Users -->
-        <div class="chart-container">
-          <div class="chart-header">
-            <h3>👑 Top Users (This Week)</h3>
-            <p v-if="weeklyData.top_users?.length">Most active users by reservations</p>
-            <p v-else class="no-data-message">No user activity data available for this week</p>
-          </div>
-          <canvas ref="topUsersChart" class="chart"></canvas>
-        </div>
-
-        <!-- Monthly Trends -->
-        <div class="chart-container full-width">
-          <div class="chart-header">
-            <h3>📊 6-Month Revenue & Usage Trends</h3>
-            <p v-if="monthlyData.monthly_trends?.length">Long-term performance analysis</p>
-            <p v-else class="no-data-message">No monthly trend data available - need historical reservations</p>
-          </div>
-          <canvas ref="monthlyChart" class="chart"></canvas>
-        </div>
-
-        <!-- Lot Performance -->
-        <div class="chart-container full-width">
-          <div class="chart-header">
-            <h3>🏆 Parking Lot Performance (Last Month)</h3>
-            <p v-if="monthlyData.lot_performance?.length">Revenue and reservation comparison by location</p>
-            <p v-else class="no-data-message">No lot performance data available for the last month</p>
-          </div>
-          <canvas ref="lotPerformanceChart" class="chart"></canvas>
-        </div>
-      </div>
-
-      <!-- Export Section -->
-      <div class="export-section">
-        <h3>📄 Export Reports</h3>
-        <div class="export-buttons">
-          <button @click="exportDailyReport" class="export-btn">
-            📋 Daily Report
-          </button>
-          <button @click="exportWeeklyReport" class="export-btn">
-            📊 Weekly Report
-          </button>
-          <button @click="exportMonthlyReport" class="export-btn">
-            📈 Monthly Report
-          </button>
-        </div>
-      </div>
+    
+    <div class="graph-container">
+      <h3>📈 Usage Patterns</h3>
+      <div class="status" v-html="graphs.usage.status"></div>
+      <div class="graph-content" v-html="graphs.usage.content"></div>
     </div>
   </div>
 </template>
 
-<script setup>
-import { ref, onMounted, nextTick } from 'vue';
-import axios from 'axios';
-import {
-  Chart,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend
-} from 'chart.js';
-
-// Register Chart.js components
-Chart.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend
-);
-
-// Reactive data
-const loading = ref(false);
-const error = ref(null);
-const analytics = ref({});
-const weeklyData = ref({});
-const monthlyData = ref({});
-const dailySimple = ref({});
-
-// Matplotlib graphs data
-const matplotlibGraphs = ref({
-  occupancy: {
-    loading: false,
-    error: null,
-    data: null
+<script>
+export default {
+  name: 'ReportsView',
+  data() {
+    return {
+      loading: false,
+      generalStatus: '',
+      API_BASE: 'http://localhost:5001',
+      graphs: {
+        occupancy: {
+          status: '',
+          content: ''
+        },
+        revenue: {
+          status: '',
+          content: ''
+        },
+        usage: {
+          status: '',
+          content: ''
+        }
+      }
+    }
   },
-  revenue: {
-    loading: false,
-    error: null,
-    data: null
-  },
-  usage: {
-    loading: false,
-    error: null,
-    data: null
-  }
-});
-
-// Chart refs
-const occupancyChart = ref(null);
-const weeklyChart = ref(null);
-const hourlyChart = ref(null);
-const topUsersChart = ref(null);
-const monthlyChart = ref(null);
-const lotPerformanceChart = ref(null);
-
-// Summary charts refs
-const spotsDistributionChart = ref(null);
-const occupancyStatusChart = ref(null);
-const lotPerformanceRankingChart = ref(null);
-const spotTypesChart = ref(null);
-
-// Chart instances
-let occupancyChartInstance = null;
-let weeklyChartInstance = null;
-let hourlyChartInstance = null;
-let topUsersChartInstance = null;
-let monthlyChartInstance = null;
-let lotPerformanceChartInstance = null;
-
-// Summary chart instances
-let spotsDistributionChartInstance = null;
-let occupancyStatusChartInstance = null;
-let lotPerformanceRankingChartInstance = null;
-let spotTypesChartInstance = null;
-
-// Color palette
-const colors = {
-  primary: '#42b883',
-  secondary: '#2c3e50',
-  danger: '#e74c3c',
-  warning: '#f39c12',
-  info: '#3498db',
-  success: '#27ae60',
-  purple: '#9b59b6',
-  orange: '#e67e22'
-};
-
-// Load all data
-const loadAnalytics = async () => {
-  try {
-    const response = await axios.get('/api/admin/analytics');
-    analytics.value = response.data;
-  } catch (err) {
-    console.error('Error loading analytics:', err);
-    throw err;
-  }
-};
-
-const loadWeeklyData = async () => {
-  try {
-    const response = await axios.get('/api/admin/reports/weekly');
-    weeklyData.value = response.data;
-  } catch (err) {
-    console.error('Error loading weekly data:', err);
-    // Set default empty data structure instead of throwing
-    weeklyData.value = {
-      daily_data: [],
-      hourly_data: [],
-      top_users: []
-    };
-  }
-};
-
-const loadMonthlyData = async () => {
-  try {
-    const response = await axios.get('/api/admin/reports/monthly');
-    monthlyData.value = response.data;
-  } catch (err) {
-    console.error('Error loading monthly data:', err);
-    // Set default empty data structure instead of throwing
-    monthlyData.value = {
-      monthly_trends: [],
-      lot_performance: []
-    };
-  }
-};
-
-const loadDailySimple = async () => {
-  try {
-    const response = await axios.get('/api/admin/reports/daily-simple');
-    dailySimple.value = response.data;
-  } catch (err) {
-    console.error('Error loading daily simple data:', err);
-    // Set default empty data structure
-    dailySimple.value = {
-      today: { total_reservations_today: 0, revenue_today: 0 },
-      available_days: [],
-      has_data: false
-    };
-  }
-};
-
-// Matplotlib graph loading functions
-const loadMatplotlibGraph = async (type) => {
-  try {
-    matplotlibGraphs.value[type].loading = true;
-    matplotlibGraphs.value[type].error = null;
-    
-    console.log(`Loading ${type} graph...`);
-    const response = await axios.get(`/api/admin/graphs/${type}`, {
-      withCredentials: true
-    });
-    console.log(`${type} graph loaded successfully:`, response.data);
-    matplotlibGraphs.value[type].data = response.data;
-    
-  } catch (err) {
-    console.error(`Error loading ${type} graph:`, err);
-    if (err.response?.status === 403) {
-      matplotlibGraphs.value[type].error = `Access denied. Please make sure you're logged in as admin.`;
-    } else if (err.response?.status === 500) {
-      matplotlibGraphs.value[type].error = `Server error while generating ${type} graph. Please try again.`;
-    } else {
-      matplotlibGraphs.value[type].error = `Failed to load ${type} graph: ${err.message}`;
-    }
-  } finally {
-    matplotlibGraphs.value[type].loading = false;
-  }
-};
-
-const loadAllMatplotlibGraphs = async () => {
-  await Promise.all([
-    loadMatplotlibGraph('occupancy'),
-    loadMatplotlibGraph('revenue'),
-    loadMatplotlibGraph('usage')
-  ]);
-};
-
-// Chart creation functions
-const createOccupancyChart = () => {
-  if (!analytics.value.lot_occupancy?.length) return;
-  
-  const ctx = occupancyChart.value.getContext('2d');
-  const lots = analytics.value.lot_occupancy;
-  
-  occupancyChartInstance = new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels: lots.map(lot => lot.prime_location_name),
-      datasets: [{
-        data: lots.map(lot => lot.occupancy_rate || 0),
-        backgroundColor: [
-          colors.primary,
-          colors.info,
-          colors.warning,
-          colors.danger,
-          colors.success,
-          colors.purple
-        ],
-        borderWidth: 2,
-        borderColor: '#fff'
-      }]
+  methods: {
+    async loginAsAdmin() {
+      this.loading = true;
+      this.generalStatus = '<div class="loading">Logging in as admin...</div>';
+      
+      try {
+        const response = await fetch(`${this.API_BASE}/api/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            username: 'admin',
+            password: 'admin123'
+          })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          this.generalStatus = '<div class="success">✅ Logged in successfully as admin!</div>';
+          console.log('Login successful:', data);
+        } else {
+          throw new Error(`Login failed: ${response.status}`);
+        }
+      } catch (error) {
+        this.generalStatus = `<div class="error">❌ Login failed: ${error.message}</div>`;
+        console.error('Login error:', error);
+      } finally {
+        this.loading = false;
+      }
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: 'bottom'
-        },
-        tooltip: {
-          callbacks: {
-            label: function(context) {
-              return `${context.label}: ${context.parsed}%`;
-            }
-          }
-        }
-      }
-    }
-  });
-};
-
-const createWeeklyChart = () => {
-  const ctx = weeklyChart.value.getContext('2d');
-  
-  // Try to use weekly data first, then fall back to daily simple data
-  if (weeklyData.value.daily_data?.length) {
-    const data = weeklyData.value.daily_data;
     
-    weeklyChartInstance = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: data.map(d => new Date(d.date).toLocaleDateString()),
-        datasets: [
-          {
-            label: 'Reservations',
-            data: data.map(d => d.reservations),
-            borderColor: colors.primary,
-            backgroundColor: colors.primary + '20',
-            tension: 0.4,
-            yAxisID: 'y'
-          },
-          {
-            label: 'Revenue ($)',
-            data: data.map(d => d.revenue),
-            borderColor: colors.warning,
-            backgroundColor: colors.warning + '20',
-            tension: 0.4,
-            yAxisID: 'y1'
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: 'top'
-          }
-        },
-        scales: {
-          y: {
-            type: 'linear',
-            display: true,
-            position: 'left',
-            title: {
-              display: true,
-              text: 'Reservations'
-            }
-          },
-          y1: {
-            type: 'linear',
-            display: true,
-            position: 'right',
-            title: {
-              display: true,
-              text: 'Revenue ($)'
-            },
-            grid: {
-              drawOnChartArea: false,
-            },
-          }
+    async loadGraph(type) {
+      this.graphs[type].status = '<div class="loading">Loading graph...</div>';
+      this.graphs[type].content = '';
+      
+      try {
+        const response = await fetch(`${this.API_BASE}/api/admin/graphs/${type}`, {
+          credentials: 'include'
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          this.graphs[type].status = '<div class="success">✅ Graph loaded successfully!</div>';
+          
+          // Display the graph
+          this.graphs[type].content = `
+            <img src="data:image/png;base64,${data.graph}" class="graph-img" alt="${type} graph">
+            <div style="margin-top: 10px;">
+              <strong>Summary:</strong> ${JSON.stringify(data.summary, null, 2)}
+            </div>
+          `;
+        } else if (response.status === 403) {
+          this.graphs[type].status = '<div class="error">❌ Access denied. Please login as admin first.</div>';
+        } else {
+          throw new Error(`Failed to load graph: ${response.status}`);
         }
+      } catch (error) {
+        this.graphs[type].status = `<div class="error">❌ Error loading graph: ${error.message}</div>`;
+        console.error(`Error loading ${type} graph:`, error);
       }
-    });
-  } else if (dailySimple.value.available_days?.length) {
-    // Use available days data as fallback
-    const data = dailySimple.value.available_days;
+    },
     
-    weeklyChartInstance = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: data.map(d => new Date(d.date).toLocaleDateString()),
-        datasets: [{
-          label: 'Reservations (Available Days)',
-          data: data.map(d => d.reservations),
-          backgroundColor: colors.primary,
-          borderColor: colors.primary,
-          borderWidth: 1
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: 'top'
-          }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            title: {
-              display: true,
-              text: 'Reservations'
-            }
-          }
-        }
+    async loadAllGraphs() {
+      this.loading = true;
+      try {
+        await Promise.all([
+          this.loadGraph('occupancy'),
+          this.loadGraph('revenue'),
+          this.loadGraph('usage')
+        ]);
+      } finally {
+        this.loading = false;
       }
-    });
-  } else {
-    // Create a message chart for no data
-    weeklyChartInstance = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: ['No Data'],
-        datasets: [{
-          label: 'No weekly data available',
-          data: [0],
-          borderColor: colors.secondary,
-          backgroundColor: colors.secondary + '20',
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            display: false
-          },
-          tooltip: {
-            callbacks: {
-              label: () => 'No weekly data available for the last 7 days'
-            }
-          }
-        },
-        scales: {
-          y: {
-            display: false
-          },
-          x: {
-            display: false
-          }
-        }
-      }
-    });
-  }
-};
-
-const createHourlyChart = () => {
-  if (!weeklyData.value.hourly_data?.length) {
-    // Create a message chart for no data
-    const ctx = hourlyChart.value.getContext('2d');
-    hourlyChartInstance = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: ['No Data'],
-        datasets: [{
-          label: 'No hourly data available',
-          data: [0],
-          backgroundColor: colors.secondary,
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            display: false
-          },
-          tooltip: {
-            callbacks: {
-              label: () => 'No hourly data available for today'
-            }
-          }
-        },
-        scales: {
-          y: {
-            display: false
-          },
-          x: {
-            display: false
-          }
-        }
-      }
-    });
-    return;
-  }
-  
-  const ctx = hourlyChart.value.getContext('2d');
-  const data = weeklyData.value.hourly_data;
-  
-  // Fill missing hours with 0
-  const hourlyReservations = new Array(24).fill(0);
-  data.forEach(d => {
-    hourlyReservations[parseInt(d.hour)] = d.reservations;
-  });
-  
-  hourlyChartInstance = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: Array.from({length: 24}, (_, i) => `${i}:00`),
-      datasets: [{
-        label: 'Reservations',
-        data: hourlyReservations,
-        backgroundColor: colors.info,
-        borderColor: colors.info,
-        borderWidth: 1
-      }]
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          display: false
-        }
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          title: {
-            display: true,
-            text: 'Number of Reservations'
-          }
-        },
-        x: {
-          title: {
-            display: true,
-            text: 'Hour of Day'
-          }
-        }
-      }
-    }
-  });
-};
-
-const createTopUsersChart = () => {
-  if (!weeklyData.value.top_users?.length) {
-    // Create a message chart for no data
-    const ctx = topUsersChart.value.getContext('2d');
-    topUsersChartInstance = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: ['No Users'],
-        datasets: [{
-          label: 'No user data available',
-          data: [0],
-          backgroundColor: colors.secondary,
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        indexAxis: 'y',
-        plugins: {
-          legend: {
-            display: false
-          },
-          tooltip: {
-            callbacks: {
-              label: () => 'No user activity data available for this week'
-            }
-          }
-        },
-        scales: {
-          x: {
-            display: false
-          },
-          y: {
-            display: false
-          }
-        }
-      }
-    });
-    return;
-  }
-  
-  const ctx = topUsersChart.value.getContext('2d');
-  const users = weeklyData.value.top_users.slice(0, 5); // Top 5 users
-  
-  topUsersChartInstance = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: users.map(user => user.username),
-      datasets: [{
-        label: 'Reservations',
-        data: users.map(user => user.total_reservations),
-        backgroundColor: colors.success,
-        borderColor: colors.success,
-        borderWidth: 1
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: 'y',
-      plugins: {
-        legend: {
-          display: false
-        }
-      },
-      scales: {
-        x: {
-          beginAtZero: true,
-          title: {
-            display: true,
-            text: 'Number of Reservations'
-          }
-        }
-      }
-    }
-  });
-};
-
-const createMonthlyChart = () => {
-  if (!monthlyData.value.monthly_trends?.length) {
-    // Create a message chart for no data
-    const ctx = monthlyChart.value.getContext('2d');
-    monthlyChartInstance = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: ['No Data'],
-        datasets: [{
-          label: 'No monthly data available',
-          data: [0],
-          borderColor: colors.secondary,
-          backgroundColor: colors.secondary + '20',
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            display: false
-          },
-          tooltip: {
-            callbacks: {
-              label: () => 'No monthly trend data available for the last 6 months'
-            }
-          }
-        },
-        scales: {
-          y: {
-            display: false
-          },
-          x: {
-            display: false
-          }
-        }
-      }
-    });
-    return;
-  }
-  
-  const ctx = monthlyChart.value.getContext('2d');
-  const trends = monthlyData.value.monthly_trends;
-  
-  monthlyChartInstance = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: trends.map(t => t.month),
-      datasets: [
-        {
-          label: 'Reservations',
-          data: trends.map(t => t.reservations),
-          borderColor: colors.primary,
-          backgroundColor: colors.primary + '20',
-          tension: 0.4,
-          yAxisID: 'y'
-        },
-        {
-          label: 'Revenue ($)',
-          data: trends.map(t => t.revenue),
-          borderColor: colors.warning,
-          backgroundColor: colors.warning + '20',
-          tension: 0.4,
-          yAxisID: 'y1'
-        },
-        {
-          label: 'Unique Users',
-          data: trends.map(t => t.unique_users),
-          borderColor: colors.info,
-          backgroundColor: colors.info + '20',
-          tension: 0.4,
-          yAxisID: 'y'
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: 'top'
-        }
-      },
-      scales: {
-        y: {
-          type: 'linear',
-          display: true,
-          position: 'left',
-          title: {
-            display: true,
-            text: 'Count'
-          }
-        },
-        y1: {
-          type: 'linear',
-          display: true,
-          position: 'right',
-          title: {
-            display: true,
-            text: 'Revenue ($)'
-          },
-          grid: {
-            drawOnChartArea: false,
-          },
-        }
-      }
-    }
-  });
-};
-
-const createLotPerformanceChart = () => {
-  if (!monthlyData.value.lot_performance?.length) {
-    // Create a message chart for no data
-    const ctx = lotPerformanceChart.value.getContext('2d');
-    lotPerformanceChartInstance = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: ['No Data'],
-        datasets: [{
-          label: 'No lot performance data available',
-          data: [0],
-          backgroundColor: colors.secondary,
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            display: false
-          },
-          tooltip: {
-            callbacks: {
-              label: () => 'No lot performance data available for the last month'
-            }
-          }
-        },
-        scales: {
-          y: {
-            display: false
-          },
-          x: {
-            display: false
-          }
-        }
-      }
-    });
-    return;
-  }
-  
-  const ctx = lotPerformanceChart.value.getContext('2d');
-  const performance = monthlyData.value.lot_performance;
-  
-  lotPerformanceChartInstance = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: performance.map(lot => lot.prime_location_name),
-      datasets: [
-        {
-          label: 'Total Reservations',
-          data: performance.map(lot => lot.total_reservations || 0),
-          backgroundColor: colors.primary,
-          yAxisID: 'y'
-        },
-        {
-          label: 'Total Revenue ($)',
-          data: performance.map(lot => lot.total_revenue || 0),
-          backgroundColor: colors.warning,
-          yAxisID: 'y1'
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: 'top'
-        }
-      },
-      scales: {
-        y: {
-          type: 'linear',
-          display: true,
-          position: 'left',
-          title: {
-            display: true,
-            text: 'Reservations'
-          }
-        },
-        y1: {
-          type: 'linear',
-          display: true,
-          position: 'right',
-          title: {
-            display: true,
-            text: 'Revenue ($)'
-          },
-          grid: {
-            drawOnChartArea: false,
-          },
-        }
-      }
-    }
-  });
-};
-
-// Summary chart creation functions
-const createSpotsDistributionChart = () => {
-  if (!analytics.value.lot_occupancy?.length) return;
-  
-  const ctx = spotsDistributionChart.value.getContext('2d');
-  const lots = analytics.value.lot_occupancy;
-  
-  spotsDistributionChartInstance = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: lots.map(lot => lot.prime_location_name || 'Unknown'),
-      datasets: [{
-        label: 'Total Spots',
-        data: lots.map(lot => lot.total_spots || 0),
-        backgroundColor: colors.primary,
-        borderColor: colors.primary,
-        borderWidth: 1
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          display: false
-        },
-        tooltip: {
-          callbacks: {
-            label: function(context) {
-              return `${context.label}: ${context.parsed.y} spots`;
-            }
-          }
-        }
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          title: {
-            display: true,
-            text: 'Number of Spots'
-          }
-        },
-        x: {
-          title: {
-            display: true,
-            text: 'Parking Lots'
-          }
-        }
-      }
-    }
-  });
-};
-
-const createOccupancyStatusChart = () => {
-  if (!analytics.value.summary) return;
-  
-  const ctx = occupancyStatusChart.value.getContext('2d');
-  const summary = analytics.value.summary;
-  const occupied = summary.total_spots - summary.available_spots || 0;
-  const available = summary.available_spots || 0;
-  
-  occupancyStatusChartInstance = new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels: ['Occupied', 'Available'],
-      datasets: [{
-        data: [occupied, available],
-        backgroundColor: [colors.danger, colors.success],
-        borderWidth: 2,
-        borderColor: '#fff'
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: 'bottom'
-        },
-        tooltip: {
-          callbacks: {
-            label: function(context) {
-              const total = occupied + available;
-              const percentage = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
-              return `${context.label}: ${context.parsed} spots (${percentage}%)`;
-            }
-          }
-        }
-      }
-    }
-  });
-};
-
-const createLotPerformanceRankingChart = () => {
-  if (!analytics.value.lot_occupancy?.length) return;
-  
-  const ctx = lotPerformanceRankingChart.value.getContext('2d');
-  const lots = analytics.value.lot_occupancy
-    .sort((a, b) => (b.occupancy_rate || 0) - (a.occupancy_rate || 0))
-    .slice(0, 5); // Top 5 lots
-  
-  lotPerformanceRankingChartInstance = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: lots.map(lot => lot.prime_location_name || 'Unknown'),
-      datasets: [{
-        label: 'Occupancy Rate (%)',
-        data: lots.map(lot => lot.occupancy_rate || 0),
-        backgroundColor: lots.map((_, index) => {
-          const colors_array = [colors.success, colors.info, colors.warning, colors.orange, colors.danger];
-          return colors_array[index] || colors.secondary;
-        }),
-        borderWidth: 1
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: 'y',
-      plugins: {
-        legend: {
-          display: false
-        },
-        tooltip: {
-          callbacks: {
-            label: function(context) {
-              return `${context.label}: ${context.parsed.x}% occupied`;
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          beginAtZero: true,
-          max: 100,
-          title: {
-            display: true,
-            text: 'Occupancy Rate (%)'
-          }
-        }
-      }
-    }
-  });
-};
-
-const createSpotTypesChart = () => {
-  // This would typically come from API data about different spot types
-  // For now, we'll create a mock representation based on available data
-  if (!analytics.value.summary) return;
-  
-  const ctx = spotTypesChart.value.getContext('2d');
-  const summary = analytics.value.summary;
-  
-  // Mock data - in real implementation, this should come from the API
-  const totalSpots = summary.total_spots || 0;
-  const regularSpots = Math.floor(totalSpots * 0.8); // 80% regular
-  const compactSpots = Math.floor(totalSpots * 0.15); // 15% compact
-  const disabledSpots = totalSpots - regularSpots - compactSpots; // remaining
-  
-  spotTypesChartInstance = new Chart(ctx, {
-    type: 'pie',
-    data: {
-      labels: ['Regular', 'Compact', 'Disabled/Reserved'],
-      datasets: [{
-        data: [regularSpots, compactSpots, disabledSpots],
-        backgroundColor: [colors.primary, colors.info, colors.warning],
-        borderWidth: 2,
-        borderColor: '#fff'
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: 'bottom'
-        },
-        tooltip: {
-          callbacks: {
-            label: function(context) {
-              const total = regularSpots + compactSpots + disabledSpots;
-              const percentage = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
-              return `${context.label}: ${context.parsed} spots (${percentage}%)`;
-            }
-          }
-        }
-      }
-    }
-  });
-};
-
-// Destroy all charts
-const destroyCharts = () => {
-  [
-    occupancyChartInstance,
-    weeklyChartInstance,
-    hourlyChartInstance,
-    topUsersChartInstance,
-    monthlyChartInstance,
-    lotPerformanceChartInstance,
-    spotsDistributionChartInstance,
-    occupancyStatusChartInstance,
-    lotPerformanceRankingChartInstance,
-    spotTypesChartInstance
-  ].forEach(chart => {
-    if (chart) {
-      chart.destroy();
-    }
-  });
-};
-
-// Create all charts
-const createAllCharts = async () => {
-  await nextTick();
-  destroyCharts();
-  
-  // Create summary charts first
-  createSpotsDistributionChart();
-  createOccupancyStatusChart();
-  createLotPerformanceRankingChart();
-  createSpotTypesChart();
-  
-  // Create existing charts
-  createOccupancyChart();
-  createWeeklyChart();
-  createHourlyChart();
-  createTopUsersChart();
-  createMonthlyChart();
-  createLotPerformanceChart();
-};
-
-// Refresh all data
-const refreshAllData = async () => {
-  try {
-    loading.value = true;
-    error.value = null;
     
-    // Load analytics first (most important)
-    await loadAnalytics();
-    
-    // Load daily simple data (fallback for when no complex data exists)
-    await loadDailySimple();
-    
-    // Load weekly and monthly data (these can fail gracefully)
-    await Promise.all([
-      loadWeeklyData(),
-      loadMonthlyData()
-    ]);
-    
-    // Load matplotlib graphs
-    await loadAllMatplotlibGraphs();
-    
-    await createAllCharts();
-  } catch (err) {
-    // Only show error if analytics failed
-    if (err.message && err.message.includes('analytics')) {
-      error.value = 'Failed to load analytics data. Please try again.';
-    } else {
-      error.value = 'Some reports data could not be loaded, but basic analytics are available.';
+    clearGraphs() {
+      Object.keys(this.graphs).forEach(type => {
+        this.graphs[type].status = '';
+        this.graphs[type].content = '';
+      });
+      this.generalStatus = '';
     }
-    console.error('Error refreshing data:', err);
-  } finally {
-    loading.value = false;
   }
-};
-
-// Export functions
-const exportDailyReport = () => {
-  const today = new Date().toISOString().split('T')[0];
-  window.open(`/api/admin/reports/daily/${today}`, '_blank');
-};
-
-const exportWeeklyReport = () => {
-  // Create CSV from weekly data or available data
-  let csvContent = '';
-  
-  if (weeklyData.value.daily_data?.length) {
-    csvContent = generateWeeklyCsv();
-  } else if (dailySimple.value.available_days?.length) {
-    csvContent = generateSimpleCsv();
-  } else {
-    alert('No data available to export');
-    return;
-  }
-  
-  downloadCsv(csvContent, `weekly-report-${new Date().toISOString().split('T')[0]}.csv`);
-};
-
-const generateSimpleCsv = () => {
-  if (!dailySimple.value.available_days) return '';
-  
-  const headers = ['Date', 'Reservations'];
-  const rows = dailySimple.value.available_days.map(d => [
-    d.date,
-    d.reservations
-  ]);
-  
-  return [headers, ...rows].map(row => row.join(',')).join('\n');
-};
-
-const exportMonthlyReport = () => {
-  // Create CSV from monthly data
-  const csvContent = generateMonthlyCsv();
-  downloadCsv(csvContent, `monthly-report-${new Date().toISOString().split('T')[0]}.csv`);
-};
-
-const generateWeeklyCsv = () => {
-  if (!weeklyData.value.daily_data) return '';
-  
-  const headers = ['Date', 'Reservations', 'Completed', 'Active', 'Revenue'];
-  const rows = weeklyData.value.daily_data.map(d => [
-    d.date,
-    d.reservations,
-    d.completed,
-    d.active,
-    d.revenue
-  ]);
-  
-  return [headers, ...rows].map(row => row.join(',')).join('\n');
-};
-
-const generateMonthlyCsv = () => {
-  if (!monthlyData.value.monthly_trends) return '';
-  
-  const headers = ['Month', 'Reservations', 'Revenue', 'Unique Users'];
-  const rows = monthlyData.value.monthly_trends.map(t => [
-    t.month,
-    t.reservations,
-    t.revenue,
-    t.unique_users
-  ]);
-  
-  return [headers, ...rows].map(row => row.join(',')).join('\n');
-};
-
-const downloadCsv = (content, filename) => {
-  const blob = new Blob([content], { type: 'text/csv' });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  window.URL.revokeObjectURL(url);
-};
-
-// Initialize on mount
-onMounted(() => {
-  refreshAllData();
-});
+}
 </script>
 
 <style scoped>
 .reports-view {
-  padding: 2rem;
-  max-width: 1400px;
+  font-family: Arial, sans-serif;
+  color: #333;
+  max-width: 1200px;
   margin: 0 auto;
+  padding: 20px;
 }
 
-.reports-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 2rem;
-  padding-bottom: 1rem;
-  border-bottom: 2px solid #e9ecef;
-}
-
-.reports-header h2 {
-  color: #2c3e50;
-  margin: 0;
-  font-size: 2rem;
-  font-weight: bold;
-}
-
-.refresh-btn {
-  background: linear-gradient(135deg, #42b883, #369870);
-  color: white;
-  border: none;
-  padding: 0.75rem 1.5rem;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: bold;
-  transition: all 0.3s ease;
-  box-shadow: 0 2px 8px rgba(66, 184, 131, 0.3);
-}
-
-.refresh-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #369870, #2d7a5f);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(66, 184, 131, 0.4);
-}
-
-.refresh-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  transform: none;
-}
-
-/* Loading and Error States */
-.loading-container, .error-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 4rem 2rem;
-  text-align: center;
-  color: #6c757d;
-}
-
-.spinner {
-  width: 50px;
-  height: 50px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #42b883;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 1rem;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.error-icon {
-  font-size: 3rem;
-  margin-bottom: 1rem;
-}
-
-.retry-btn {
-  background-color: #e74c3c;
-  color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
-  cursor: pointer;
-  margin-top: 1rem;
-}
-
-.retry-btn:hover {
-  background-color: #c0392b;
-}
-
-/* Summary Cards */
-.summary-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 1.5rem;
-  margin-bottom: 2rem;
-}
-
-.card {
-  background: linear-gradient(135deg, #fff, #f8f9fa);
-  border-radius: 12px;
-  padding: 1.5rem;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  border: 1px solid #e9ecef;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-}
-
-.card-icon {
-  font-size: 2.5rem;
-  opacity: 0.8;
-}
-
-.card-content h3 {
-  font-size: 2rem;
-  font-weight: bold;
-  color: #2c3e50;
-  margin: 0;
-}
-
-.card-content p {
-  color: #6c757d;
-  margin: 0.25rem 0;
-  font-weight: 500;
-}
-
-.card-content small {
-  color: #42b883;
-  font-size: 0.85rem;
-  font-weight: bold;
-}
-
-/* Summary Charts Section */
-.summary-charts-section {
-  margin-bottom: 2rem;
-  background: white;
-  border-radius: 12px;
-  padding: 2rem;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  border: 1px solid #e9ecef;
-}
-
-.section-header {
-  text-align: center;
-  margin-bottom: 2rem;
-  padding-bottom: 1rem;
-  border-bottom: 2px solid #e9ecef;
-}
-
-.section-header h3 {
-  color: #2c3e50;
-  margin: 0 0 0.5rem 0;
-  font-size: 1.75rem;
-  font-weight: bold;
-}
-
-.section-header p {
-  color: #6c757d;
-  margin: 0;
-  font-size: 1rem;
-}
-
-.summary-charts-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-  gap: 1.5rem;
-}
-
-.summary-chart-container {
-  background: #f8f9fa;
-  border-radius: 8px;
-  padding: 1.5rem;
-  border: 1px solid #e9ecef;
-  transition: all 0.3s ease;
-}
-
-.summary-chart-container:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.summary-chart-container .chart-header {
-  margin-bottom: 1rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid #dee2e6;
-}
-
-.summary-chart-container .chart-header h4 {
-  color: #2c3e50;
-  margin: 0 0 0.25rem 0;
-  font-size: 1.1rem;
-  font-weight: bold;
-}
-
-.summary-chart-container .chart-header p {
-  color: #6c757d;
-  margin: 0;
-  font-size: 0.85rem;
-}
-
-.summary-chart-container .chart {
-  height: 280px !important;
-  width: 100% !important;
-}
-
-/* Charts Grid */
-.charts-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-  gap: 2rem;
-  margin-bottom: 2rem;
-}
-
-.chart-container {
-  background: white;
-  border-radius: 12px;
-  padding: 1.5rem;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  border: 1px solid #e9ecef;
-  transition: all 0.3s ease;
-}
-
-.chart-container:hover {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-}
-
-.chart-container.full-width {
-  grid-column: 1 / -1;
-}
-
-.chart-header {
-  margin-bottom: 1rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid #e9ecef;
-}
-
-.chart-header h3 {
-  color: #2c3e50;
-  margin: 0 0 0.5rem 0;
-  font-size: 1.25rem;
-  font-weight: bold;
-}
-
-.chart-header p {
-  color: #6c757d;
-  margin: 0;
-  font-size: 0.9rem;
-}
-
-.no-data-message {
-  color: #e74c3c !important;
-  font-style: italic;
-  font-weight: 500;
-}
-
-.fallback-message {
-  color: #f39c12 !important;
-  font-style: italic;
-  font-weight: 500;
-}
-
-.chart {
-  height: 300px !important;
-  width: 100% !important;
-}
-
-/* Matplotlib Graphs Styles */
-.matplotlib-graphs {
-  display: flex;
-  flex-direction: column;
-  gap: 2rem;
-}
-
-.graph-section {
-  background: #f8f9fa;
-  border-radius: 8px;
-  padding: 1rem;
-  border: 1px solid #e9ecef;
-}
-
-.graph-section h4 {
-  margin: 0 0 1rem 0;
-  color: #2c3e50;
-  font-size: 1.2rem;
-  font-weight: bold;
+.button-group {
+  margin-bottom: 20px;
 }
 
 .graph-container {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+  margin-bottom: 30px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 20px;
 }
 
-.matplotlib-graph {
-  width: 100%;
+.graph-container h3 {
+  margin-top: 0;
+  color: #333;
+}
+
+.graph-img {
+  width: 10%;
+  max-width: auto;
   height: auto;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  background: white;
-}
-
-.graph-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
-  padding: 1rem;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-}
-
-.summary-item {
-  padding: 0.5rem;
-  background: #f8f9fa;
+  border: 1px solid #ccc;
   border-radius: 4px;
-  text-align: center;
-  font-size: 0.9rem;
 }
 
-.summary-item strong {
-  color: #2c3e50;
-  display: block;
-  margin-bottom: 0.25rem;
-}
-
-.graph-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  text-align: center;
-  color: #6c757d;
-}
-
-.graph-error {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  text-align: center;
+/* Status message styles */
+:deep(.error) {
   color: #e74c3c;
+  padding: 10px;
+  background: #ffe6e6;
+  border-radius: 4px;
 }
 
-.graph-error .retry-btn {
-  background-color: #e74c3c;
+:deep(.loading) {
+  color: #3498db;
+  padding: 10px;
+  background: #e6f3ff;
+  border-radius: 4px;
+}
+
+:deep(.success) {
+  color: #27ae60;
+  padding: 10px;
+  background: #e6ffe6;
+  border-radius: 4px;
+}
+
+button {
+  background: #3498db;
   color: white;
   border: none;
-  padding: 0.5rem 1rem;
+  padding: 10px 20px;
   border-radius: 4px;
   cursor: pointer;
-  margin-top: 1rem;
+  margin-right: 10px;
 }
 
-.graph-error .retry-btn:hover {
-  background-color: #c0392b;
+button:hover:not(:disabled) {
+  background: #2980b9;
 }
 
-/* Debug Panel (temporary) */
-.debug-panel {
-  background: #fff3cd;
-  border: 1px solid #ffeaa7;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 2rem;
-}
-
-.debug-panel h3 {
-  margin: 0 0 1rem 0;
-  color: #856404;
-}
-
-.debug-info p {
-  margin: 0.5rem 0;
-  font-size: 0.9rem;
-}
-
-.debug-info ul {
-  margin: 0.5rem 0 0 1rem;
-  font-size: 0.85rem;
-}
-
-.debug-info li {
-  margin: 0.25rem 0;
-}
-
-/* Export Section */
-.export-section {
-  background: linear-gradient(135deg, #f8f9fa, #e9ecef);
-  border-radius: 12px;
-  padding: 2rem;
-  text-align: center;
-  border: 1px solid #dee2e6;
-}
-
-.export-section h3 {
-  color: #2c3e50;
-  margin: 0 0 1.5rem 0;
-  font-size: 1.5rem;
-}
-
-.export-buttons {
-  display: flex;
-  justify-content: center;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.export-btn {
-  background: linear-gradient(135deg, #3498db, #2980b9);
-  color: white;
-  border: none;
-  padding: 0.75rem 1.5rem;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: bold;
-  transition: all 0.3s ease;
-  box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
-}
-
-.export-btn:hover {
-  background: linear-gradient(135deg, #2980b9, #21618c);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
-}
-
-/* Responsive Design */
-@media (max-width: 1200px) {
-  .summary-charts-grid {
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  }
-  
-  .charts-grid {
-    grid-template-columns: 1fr;
-  }
-  
-  .chart-container.full-width {
-    grid-column: 1;
-  }
-}
-
-@media (max-width: 768px) {
-  .reports-view {
-    padding: 1rem;
-  }
-  
-  .reports-header {
-    flex-direction: column;
-    gap: 1rem;
-    text-align: center;
-  }
-  
-  .reports-header h2 {
-    font-size: 1.5rem;
-  }
-  
-  .summary-cards {
-    grid-template-columns: 1fr;
-  }
-  
-  .card {
-    flex-direction: column;
-    text-align: center;
-  }
-  
-  .summary-charts-section {
-    padding: 1rem;
-  }
-  
-  .section-header h3 {
-    font-size: 1.5rem;
-  }
-  
-  .summary-charts-grid {
-    grid-template-columns: 1fr;
-    gap: 1rem;
-  }
-  
-  .summary-chart-container {
-    padding: 1rem;
-  }
-  
-  .summary-chart-container .chart {
-    height: 250px !important;
-  }
-  
-  .charts-grid {
-    grid-template-columns: 1fr;
-    gap: 1rem;
-  }
-  
-  .chart-container {
-    padding: 1rem;
-  }
-  
-  .chart {
-    height: 250px !important;
-  }
-  
-  .export-buttons {
-    flex-direction: column;
-    align-items: center;
-  }
-  
-  .export-btn {
-    width: 100%;
-    max-width: 200px;
-  }
-}
-
-/* Animation for smooth transitions */
-.reports-content {
-  animation: fadeIn 0.5s ease-in;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Custom scrollbar */
-.reports-view::-webkit-scrollbar {
-  width: 8px;
-}
-
-.reports-view::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 4px;
-}
-
-.reports-view::-webkit-scrollbar-thumb {
-  background: #42b883;
-  border-radius: 4px;
-}
-
-.reports-view::-webkit-scrollbar-thumb:hover {
-  background: #369870;
+button:disabled {
+  background: #bdc3c7;
+  cursor: not-allowed;
 }
 </style>
-
