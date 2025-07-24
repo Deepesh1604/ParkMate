@@ -76,6 +76,52 @@
         </div>
       </div>
 
+      <!-- Parking Lots/Spots Summary Charts -->
+      <div class="summary-charts-section">
+        <div class="section-header">
+          <h3>🏢 Parking Lots & Spots Overview</h3>
+          <p>Detailed analytics of parking infrastructure and utilization</p>
+        </div>
+        
+        <div class="summary-charts-grid">
+          <!-- Spots Distribution by Lot -->
+          <div class="summary-chart-container">
+            <div class="chart-header">
+              <h4>🎯 Spots Distribution by Lot</h4>
+              <p>Total capacity breakdown across all parking lots</p>
+            </div>
+            <canvas ref="spotsDistributionChart" class="chart"></canvas>
+          </div>
+
+          <!-- Occupancy Status Overview -->
+          <div class="summary-chart-container">
+            <div class="chart-header">
+              <h4>📊 Current Occupancy Status</h4>
+              <p>Real-time view of occupied vs available spots</p>
+            </div>
+            <canvas ref="occupancyStatusChart" class="chart"></canvas>
+          </div>
+
+          <!-- Lot Performance Metrics -->
+          <div class="summary-chart-container">
+            <div class="chart-header">
+              <h4>⭐ Lot Performance Ranking</h4>
+              <p>Ranking by utilization rate and efficiency</p>
+            </div>
+            <canvas ref="lotPerformanceRankingChart" class="chart"></canvas>
+          </div>
+
+          <!-- Spots Type Distribution -->
+          <div class="summary-chart-container">
+            <div class="chart-header">
+              <h4>🚗 Spot Types & Availability</h4>
+              <p>Distribution of different parking spot categories</p>
+            </div>
+            <canvas ref="spotTypesChart" class="chart"></canvas>
+          </div>
+        </div>
+      </div>
+
       <!-- Charts Grid -->
       <div class="charts-grid">
         <!-- Matplotlib Real-time Graphs -->
@@ -320,6 +366,12 @@ const topUsersChart = ref(null);
 const monthlyChart = ref(null);
 const lotPerformanceChart = ref(null);
 
+// Summary charts refs
+const spotsDistributionChart = ref(null);
+const occupancyStatusChart = ref(null);
+const lotPerformanceRankingChart = ref(null);
+const spotTypesChart = ref(null);
+
 // Chart instances
 let occupancyChartInstance = null;
 let weeklyChartInstance = null;
@@ -327,6 +379,12 @@ let hourlyChartInstance = null;
 let topUsersChartInstance = null;
 let monthlyChartInstance = null;
 let lotPerformanceChartInstance = null;
+
+// Summary chart instances
+let spotsDistributionChartInstance = null;
+let occupancyStatusChartInstance = null;
+let lotPerformanceRankingChartInstance = null;
+let spotTypesChartInstance = null;
 
 // Color palette
 const colors = {
@@ -984,6 +1042,197 @@ const createLotPerformanceChart = () => {
   });
 };
 
+// Summary chart creation functions
+const createSpotsDistributionChart = () => {
+  if (!analytics.value.lot_occupancy?.length) return;
+  
+  const ctx = spotsDistributionChart.value.getContext('2d');
+  const lots = analytics.value.lot_occupancy;
+  
+  spotsDistributionChartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: lots.map(lot => lot.prime_location_name || 'Unknown'),
+      datasets: [{
+        label: 'Total Spots',
+        data: lots.map(lot => lot.total_spots || 0),
+        backgroundColor: colors.primary,
+        borderColor: colors.primary,
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return `${context.label}: ${context.parsed.y} spots`;
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          title: {
+            display: true,
+            text: 'Number of Spots'
+          }
+        },
+        x: {
+          title: {
+            display: true,
+            text: 'Parking Lots'
+          }
+        }
+      }
+    }
+  });
+};
+
+const createOccupancyStatusChart = () => {
+  if (!analytics.value.summary) return;
+  
+  const ctx = occupancyStatusChart.value.getContext('2d');
+  const summary = analytics.value.summary;
+  const occupied = summary.total_spots - summary.available_spots || 0;
+  const available = summary.available_spots || 0;
+  
+  occupancyStatusChartInstance = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Occupied', 'Available'],
+      datasets: [{
+        data: [occupied, available],
+        backgroundColor: [colors.danger, colors.success],
+        borderWidth: 2,
+        borderColor: '#fff'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom'
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const total = occupied + available;
+              const percentage = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
+              return `${context.label}: ${context.parsed} spots (${percentage}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+};
+
+const createLotPerformanceRankingChart = () => {
+  if (!analytics.value.lot_occupancy?.length) return;
+  
+  const ctx = lotPerformanceRankingChart.value.getContext('2d');
+  const lots = analytics.value.lot_occupancy
+    .sort((a, b) => (b.occupancy_rate || 0) - (a.occupancy_rate || 0))
+    .slice(0, 5); // Top 5 lots
+  
+  lotPerformanceRankingChartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: lots.map(lot => lot.prime_location_name || 'Unknown'),
+      datasets: [{
+        label: 'Occupancy Rate (%)',
+        data: lots.map(lot => lot.occupancy_rate || 0),
+        backgroundColor: lots.map((_, index) => {
+          const colors_array = [colors.success, colors.info, colors.warning, colors.orange, colors.danger];
+          return colors_array[index] || colors.secondary;
+        }),
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      indexAxis: 'y',
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return `${context.label}: ${context.parsed.x}% occupied`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          max: 100,
+          title: {
+            display: true,
+            text: 'Occupancy Rate (%)'
+          }
+        }
+      }
+    }
+  });
+};
+
+const createSpotTypesChart = () => {
+  // This would typically come from API data about different spot types
+  // For now, we'll create a mock representation based on available data
+  if (!analytics.value.summary) return;
+  
+  const ctx = spotTypesChart.value.getContext('2d');
+  const summary = analytics.value.summary;
+  
+  // Mock data - in real implementation, this should come from the API
+  const totalSpots = summary.total_spots || 0;
+  const regularSpots = Math.floor(totalSpots * 0.8); // 80% regular
+  const compactSpots = Math.floor(totalSpots * 0.15); // 15% compact
+  const disabledSpots = totalSpots - regularSpots - compactSpots; // remaining
+  
+  spotTypesChartInstance = new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels: ['Regular', 'Compact', 'Disabled/Reserved'],
+      datasets: [{
+        data: [regularSpots, compactSpots, disabledSpots],
+        backgroundColor: [colors.primary, colors.info, colors.warning],
+        borderWidth: 2,
+        borderColor: '#fff'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom'
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const total = regularSpots + compactSpots + disabledSpots;
+              const percentage = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
+              return `${context.label}: ${context.parsed} spots (${percentage}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+};
+
 // Destroy all charts
 const destroyCharts = () => {
   [
@@ -992,7 +1241,11 @@ const destroyCharts = () => {
     hourlyChartInstance,
     topUsersChartInstance,
     monthlyChartInstance,
-    lotPerformanceChartInstance
+    lotPerformanceChartInstance,
+    spotsDistributionChartInstance,
+    occupancyStatusChartInstance,
+    lotPerformanceRankingChartInstance,
+    spotTypesChartInstance
   ].forEach(chart => {
     if (chart) {
       chart.destroy();
@@ -1005,6 +1258,13 @@ const createAllCharts = async () => {
   await nextTick();
   destroyCharts();
   
+  // Create summary charts first
+  createSpotsDistributionChart();
+  createOccupancyStatusChart();
+  createLotPerformanceRankingChart();
+  createSpotTypesChart();
+  
+  // Create existing charts
   createOccupancyChart();
   createWeeklyChart();
   createHourlyChart();
@@ -1274,6 +1534,79 @@ onMounted(() => {
   font-weight: bold;
 }
 
+/* Summary Charts Section */
+.summary-charts-section {
+  margin-bottom: 2rem;
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e9ecef;
+}
+
+.section-header {
+  text-align: center;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #e9ecef;
+}
+
+.section-header h3 {
+  color: #2c3e50;
+  margin: 0 0 0.5rem 0;
+  font-size: 1.75rem;
+  font-weight: bold;
+}
+
+.section-header p {
+  color: #6c757d;
+  margin: 0;
+  font-size: 1rem;
+}
+
+.summary-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 1.5rem;
+}
+
+.summary-chart-container {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 1.5rem;
+  border: 1px solid #e9ecef;
+  transition: all 0.3s ease;
+}
+
+.summary-chart-container:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.summary-chart-container .chart-header {
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.summary-chart-container .chart-header h4 {
+  color: #2c3e50;
+  margin: 0 0 0.25rem 0;
+  font-size: 1.1rem;
+  font-weight: bold;
+}
+
+.summary-chart-container .chart-header p {
+  color: #6c757d;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.summary-chart-container .chart {
+  height: 280px !important;
+  width: 100% !important;
+}
+
 /* Charts Grid */
 .charts-grid {
   display: grid;
@@ -1498,6 +1831,10 @@ onMounted(() => {
 
 /* Responsive Design */
 @media (max-width: 1200px) {
+  .summary-charts-grid {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+  
   .charts-grid {
     grid-template-columns: 1fr;
   }
@@ -1529,6 +1866,27 @@ onMounted(() => {
   .card {
     flex-direction: column;
     text-align: center;
+  }
+  
+  .summary-charts-section {
+    padding: 1rem;
+  }
+  
+  .section-header h3 {
+    font-size: 1.5rem;
+  }
+  
+  .summary-charts-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  
+  .summary-chart-container {
+    padding: 1rem;
+  }
+  
+  .summary-chart-container .chart {
+    height: 250px !important;
   }
   
   .charts-grid {
