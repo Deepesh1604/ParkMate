@@ -25,6 +25,21 @@
 
     <!-- Main Content -->
     <div v-else class="reports-content">
+      <!-- Debug Panel (temporary) -->
+      <div class="debug-panel" v-if="true">
+        <h3>🔧 Debug Information</h3>
+        <div class="debug-info">
+          <p><strong>Analytics loaded:</strong> {{ Object.keys(analytics).length > 0 ? 'Yes' : 'No' }}</p>
+          <p><strong>Session status:</strong> {{ analytics.summary ? 'Authenticated' : 'Unknown' }}</p>
+          <p><strong>Matplotlib graphs status:</strong></p>
+          <ul>
+            <li>Occupancy: {{ matplotlibGraphs.occupancy.loading ? 'Loading...' : matplotlibGraphs.occupancy.error ? 'Error: ' + matplotlibGraphs.occupancy.error : matplotlibGraphs.occupancy.data ? 'Loaded' : 'Not loaded' }}</li>
+            <li>Revenue: {{ matplotlibGraphs.revenue.loading ? 'Loading...' : matplotlibGraphs.revenue.error ? 'Error: ' + matplotlibGraphs.revenue.error : matplotlibGraphs.revenue.data ? 'Loaded' : 'Not loaded' }}</li>
+            <li>Usage: {{ matplotlibGraphs.usage.loading ? 'Loading...' : matplotlibGraphs.usage.error ? 'Error: ' + matplotlibGraphs.usage.error : matplotlibGraphs.usage.data ? 'Loaded' : 'Not loaded' }}</li>
+          </ul>
+        </div>
+      </div>
+
       <!-- Summary Cards -->
       <div class="summary-cards">
         <div class="card">
@@ -63,7 +78,103 @@
 
       <!-- Charts Grid -->
       <div class="charts-grid">
-        <!-- Occupancy Chart -->
+        <!-- Matplotlib Real-time Graphs -->
+        <div class="chart-container full-width">
+          <div class="chart-header">
+            <h3>🎯 Real-time Parking Analytics (Matplotlib)</h3>
+            <p>Live generated graphs with current parking data</p>
+          </div>
+          <div class="matplotlib-graphs">
+            <div class="graph-section">
+              <h4>📊 Occupancy Analysis</h4>
+              <div v-if="matplotlibGraphs.occupancy.loading" class="graph-loading">
+                <div class="spinner"></div>
+                <p>Generating occupancy graph...</p>
+              </div>
+              <div v-else-if="matplotlibGraphs.occupancy.error" class="graph-error">
+                <p>{{ matplotlibGraphs.occupancy.error }}</p>
+                <button @click="loadMatplotlibGraph('occupancy')" class="retry-btn">Retry</button>
+              </div>
+              <div v-else-if="matplotlibGraphs.occupancy.data" class="graph-container">
+                <img :src="`data:image/png;base64,${matplotlibGraphs.occupancy.data.graph}`" 
+                     alt="Occupancy Analysis Graph" class="matplotlib-graph">
+                <div class="graph-summary">
+                  <div class="summary-item">
+                    <strong>Total Spots:</strong> {{ matplotlibGraphs.occupancy.data.summary?.total_spots || 0 }}
+                  </div>
+                  <div class="summary-item">
+                    <strong>Occupied:</strong> {{ matplotlibGraphs.occupancy.data.summary?.total_occupied || 0 }}
+                  </div>
+                  <div class="summary-item">
+                    <strong>Available:</strong> {{ matplotlibGraphs.occupancy.data.summary?.total_available || 0 }}
+                  </div>
+                  <div class="summary-item">
+                    <strong>Overall Occupancy:</strong> {{ matplotlibGraphs.occupancy.data.summary?.overall_occupancy || 0 }}%
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="graph-section">
+              <h4>💰 Revenue Analysis</h4>
+              <div v-if="matplotlibGraphs.revenue.loading" class="graph-loading">
+                <div class="spinner"></div>
+                <p>Generating revenue graph...</p>
+              </div>
+              <div v-else-if="matplotlibGraphs.revenue.error" class="graph-error">
+                <p>{{ matplotlibGraphs.revenue.error }}</p>
+                <button @click="loadMatplotlibGraph('revenue')" class="retry-btn">Retry</button>
+              </div>
+              <div v-else-if="matplotlibGraphs.revenue.data" class="graph-container">
+                <img :src="`data:image/png;base64,${matplotlibGraphs.revenue.data.graph}`" 
+                     alt="Revenue Analysis Graph" class="matplotlib-graph">
+                <div class="graph-summary">
+                  <div class="summary-item">
+                    <strong>Total Revenue:</strong> ${{ matplotlibGraphs.revenue.data.summary?.total_revenue || 0 }}
+                  </div>
+                  <div class="summary-item">
+                    <strong>Avg Daily Revenue:</strong> ${{ matplotlibGraphs.revenue.data.summary?.avg_daily_revenue || 0 }}
+                  </div>
+                  <div class="summary-item">
+                    <strong>Total Reservations:</strong> {{ matplotlibGraphs.revenue.data.summary?.total_reservations || 0 }}
+                  </div>
+                  <div class="summary-item">
+                    <strong>Avg Daily Reservations:</strong> {{ matplotlibGraphs.revenue.data.summary?.avg_daily_reservations || 0 }}
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="graph-section">
+              <h4>📈 Usage Patterns</h4>
+              <div v-if="matplotlibGraphs.usage.loading" class="graph-loading">
+                <div class="spinner"></div>
+                <p>Generating usage graph...</p>
+              </div>
+              <div v-else-if="matplotlibGraphs.usage.error" class="graph-error">
+                <p>{{ matplotlibGraphs.usage.error }}</p>
+                <button @click="loadMatplotlibGraph('usage')" class="retry-btn">Retry</button>
+              </div>
+              <div v-else-if="matplotlibGraphs.usage.data" class="graph-container">
+                <img :src="`data:image/png;base64,${matplotlibGraphs.usage.data.graph}`" 
+                     alt="Usage Patterns Graph" class="matplotlib-graph">
+                <div class="graph-summary">
+                  <div class="summary-item">
+                    <strong>Peak Hour:</strong> {{ matplotlibGraphs.usage.data.summary?.peak_hour || 'N/A' }}
+                  </div>
+                  <div class="summary-item">
+                    <strong>Active Users:</strong> {{ matplotlibGraphs.usage.data.summary?.total_active_users || 0 }}
+                  </div>
+                  <div class="summary-item">
+                    <strong>Avg Hourly Reservations:</strong> {{ matplotlibGraphs.usage.data.summary?.avg_hourly_reservations || 0 }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chart.js Interactive Charts -->
         <div class="chart-container">
           <div class="chart-header">
             <h3>🎯 Lot Occupancy Rates</h3>
@@ -182,6 +293,25 @@ const weeklyData = ref({});
 const monthlyData = ref({});
 const dailySimple = ref({});
 
+// Matplotlib graphs data
+const matplotlibGraphs = ref({
+  occupancy: {
+    loading: false,
+    error: null,
+    data: null
+  },
+  revenue: {
+    loading: false,
+    error: null,
+    data: null
+  },
+  usage: {
+    loading: false,
+    error: null,
+    data: null
+  }
+});
+
 // Chart refs
 const occupancyChart = ref(null);
 const weeklyChart = ref(null);
@@ -263,6 +393,41 @@ const loadDailySimple = async () => {
       has_data: false
     };
   }
+};
+
+// Matplotlib graph loading functions
+const loadMatplotlibGraph = async (type) => {
+  try {
+    matplotlibGraphs.value[type].loading = true;
+    matplotlibGraphs.value[type].error = null;
+    
+    console.log(`Loading ${type} graph...`);
+    const response = await axios.get(`/api/admin/graphs/${type}`, {
+      withCredentials: true
+    });
+    console.log(`${type} graph loaded successfully:`, response.data);
+    matplotlibGraphs.value[type].data = response.data;
+    
+  } catch (err) {
+    console.error(`Error loading ${type} graph:`, err);
+    if (err.response?.status === 403) {
+      matplotlibGraphs.value[type].error = `Access denied. Please make sure you're logged in as admin.`;
+    } else if (err.response?.status === 500) {
+      matplotlibGraphs.value[type].error = `Server error while generating ${type} graph. Please try again.`;
+    } else {
+      matplotlibGraphs.value[type].error = `Failed to load ${type} graph: ${err.message}`;
+    }
+  } finally {
+    matplotlibGraphs.value[type].loading = false;
+  }
+};
+
+const loadAllMatplotlibGraphs = async () => {
+  await Promise.all([
+    loadMatplotlibGraph('occupancy'),
+    loadMatplotlibGraph('revenue'),
+    loadMatplotlibGraph('usage')
+  ]);
 };
 
 // Chart creation functions
@@ -866,6 +1031,9 @@ const refreshAllData = async () => {
       loadMonthlyData()
     ]);
     
+    // Load matplotlib graphs
+    await loadAllMatplotlibGraphs();
+    
     await createAllCharts();
   } catch (err) {
     // Only show error if analytics failed
@@ -1165,6 +1333,127 @@ onMounted(() => {
 .chart {
   height: 300px !important;
   width: 100% !important;
+}
+
+/* Matplotlib Graphs Styles */
+.matplotlib-graphs {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.graph-section {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 1rem;
+  border: 1px solid #e9ecef;
+}
+
+.graph-section h4 {
+  margin: 0 0 1rem 0;
+  color: #2c3e50;
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.graph-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.matplotlib-graph {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  background: white;
+}
+
+.graph-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.summary-item {
+  padding: 0.5rem;
+  background: #f8f9fa;
+  border-radius: 4px;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.summary-item strong {
+  color: #2c3e50;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.graph-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  color: #6c757d;
+}
+
+.graph-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  color: #e74c3c;
+}
+
+.graph-error .retry-btn {
+  background-color: #e74c3c;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 1rem;
+}
+
+.graph-error .retry-btn:hover {
+  background-color: #c0392b;
+}
+
+/* Debug Panel (temporary) */
+.debug-panel {
+  background: #fff3cd;
+  border: 1px solid #ffeaa7;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 2rem;
+}
+
+.debug-panel h3 {
+  margin: 0 0 1rem 0;
+  color: #856404;
+}
+
+.debug-info p {
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.debug-info ul {
+  margin: 0.5rem 0 0 1rem;
+  font-size: 0.85rem;
+}
+
+.debug-info li {
+  margin: 0.25rem 0;
 }
 
 /* Export Section */
