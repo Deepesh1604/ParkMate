@@ -56,13 +56,6 @@
           </div>
         </div>
         
-        <div class="stat-card">
-          <div class="stat-icon">⏱️</div>
-          <div class="stat-content">
-            <h3>{{ formatDuration(userAnalytics.summary?.average_duration || 0) }}h</h3>
-            <p>Average Duration</p>
-          </div>
-        </div>
       </div>
 
       <div class="charts-section">

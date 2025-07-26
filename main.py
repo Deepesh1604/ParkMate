@@ -1446,9 +1446,9 @@ def generate_occupancy_graph():
         df['available_spots'] = df['total_spots'] - df['occupied_spots']
         df['occupancy_rate'] = (df['occupied_spots'] / df['total_spots'] * 100).round(2)
         
-        # Create figure with subplots
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-        fig.suptitle('Parking Lot Analytics Dashboard', fontsize=16, fontweight='bold')
+        # Create figure with subplots - smaller size for better container fit
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(8, 6))
+        fig.suptitle('Parking Lot Analytics Dashboard', fontsize=12, fontweight='bold', y=0.96)
         
         # 1. Occupancy pie chart
         colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#FF9FF3']
@@ -1470,7 +1470,8 @@ def generate_occupancy_graph():
         ax2.set_xticklabels(df['prime_location_name'], rotation=45, ha='right')
         ax2.legend()
         ax2.grid(True, alpha=0.3)
-        
+
+
         # 3. Occupancy rate bar chart
         bars = ax3.bar(df['prime_location_name'], df['occupancy_rate'], 
                        color=['#FF6B6B' if x > 80 else '#FECA57' if x > 60 else '#4ECDC4' 
@@ -1499,7 +1500,7 @@ def generate_occupancy_graph():
                                           colors=colors_overview, startangle=90)
         ax4.set_title(f'Overall System Status\nTotal: {total_spots} spots', fontweight='bold')
         
-        plt.tight_layout()
+        plt.tight_layout(h_pad=3.0, w_pad=2.5, rect=[0.08, 0.08, 0.92, 0.88])  # Optimized spacing for smaller figure
         graph_data = generate_graph_base64(fig)
         
         return jsonify({
@@ -1559,9 +1560,9 @@ def generate_revenue_graph():
         df = pd.DataFrame(data)
         df['date'] = pd.to_datetime(df['date'])
         
-        # Create figure with subplots
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-        fig.suptitle('Revenue Analytics Dashboard', fontsize=16, fontweight='bold')
+        # Create figure with subplots - smaller size for better container fit
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(8, 6))
+        fig.suptitle('Revenue Analytics Dashboard', fontsize=14, fontweight='bold', y=0.98)
         
         # 1. Daily revenue trend
         ax1.plot(df['date'], df['revenue'], marker='o', linewidth=2, 
@@ -1609,7 +1610,7 @@ def generate_revenue_graph():
         ax4.set_title('Daily Revenue Distribution', fontweight='bold')
         ax4.grid(True, alpha=0.3)
         
-        plt.tight_layout()
+        plt.tight_layout(h_pad=3.0, w_pad=2.5, rect=[0.08, 0.08, 0.92, 0.88])  # Optimized spacing for smaller figure
         graph_data = generate_graph_base64(fig)
         
         total_revenue = df['revenue'].sum()
@@ -1676,9 +1677,9 @@ def generate_usage_graph():
             user_data = [{'username': f'User{i}', 'total_reservations': np.random.randint(1, 20)} 
                         for i in range(1, 11)]
         
-        # Create figure
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-        fig.suptitle('Usage Analytics Dashboard', fontsize=16, fontweight='bold')
+        # Create figure - smaller size for better container fit
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(8, 6))
+        fig.suptitle('Usage Analytics Dashboard', fontsize=14, fontweight='bold', y=0.98)
         
         # 1. Hourly usage pattern
         hours = [int(d['hour']) for d in hourly_data]
@@ -1729,27 +1730,35 @@ def generate_usage_graph():
             ax3.text(bar.get_x() + bar.get_width()/2., height + 0.1,
                     f'{value}', ha='center', va='bottom', fontweight='bold')
         
-        # 4. Usage intensity heatmap data
-        days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-        hours_day = list(range(6, 23))  # 6 AM to 10 PM
+        # 4. Usage summary text instead of heatmap
+        ax4.axis('off')  # Turn off axis for text display
         
-        # Generate sample heatmap data
-        np.random.seed(42)  # For consistent results
-        usage_matrix = np.random.randint(0, 10, size=(len(days), len(hours_day)))
+        # Calculate some summary statistics
+        total_reservations = sum(hourly_reservations)
+        avg_hourly = total_reservations / 24 if total_reservations > 0 else 0
+        peak_hour_value = max(hourly_reservations) if hourly_reservations else 0
+        peak_hour_idx = hourly_reservations.index(peak_hour_value) if peak_hour_value > 0 else 0
         
-        im = ax4.imshow(usage_matrix, cmap='YlOrRd', aspect='auto')
-        ax4.set_xticks(range(len(hours_day)))
-        ax4.set_xticklabels([f'{h}:00' for h in hours_day], rotation=45)
-        ax4.set_yticks(range(len(days)))
-        ax4.set_yticklabels(days)
-        ax4.set_xlabel('Hour of Day')
-        ax4.set_ylabel('Day of Week')
-        ax4.set_title('Usage Intensity Heatmap', fontweight='bold')
+        summary_text = f"""
+📊 Usage Summary
+
+🔥 Peak Hour: {peak_hour_idx:02d}:00
+   ({peak_hour_value} reservations)
+
+📈 Total Daily: {total_reservations}
+   reservations
+
+⏰ Hourly Average: {avg_hourly:.1f}
+   reservations
+
+👥 Active Users: {len(user_data)}
+   in last 30 days
+        """
         
-        # Add colorbar
-        plt.colorbar(im, ax=ax4, label='Reservations')
+        ax4.text(0.1, 0.9, summary_text, transform=ax4.transAxes, fontsize=10,
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
         
-        plt.tight_layout()
+        plt.tight_layout(h_pad=3.0, w_pad=2.5, rect=[0.08, 0.08, 0.92, 0.88])  # Optimized spacing for smaller figure
         graph_data = generate_graph_base64(fig)
         
         return jsonify({
