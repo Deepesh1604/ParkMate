@@ -54,7 +54,7 @@
     <div v-if="!loading && dashboardData" class="dashboard-grid">
       
       <!-- Key Metrics Cards -->
-     <!-- <div class="metrics-section">
+      <div class="metrics-section">
         <h2>📈 Key Metrics</h2>
         <div class="metrics-grid">
           <div class="metric-card">
@@ -86,7 +86,7 @@
             </div>
           </div>
         </div>
-      </div> -->
+      </div>
 
       <!-- Occupancy Analysis -->
       <div class="chart-section">
