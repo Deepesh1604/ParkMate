@@ -132,10 +132,6 @@
         <div class="chart-debug" v-if="monthlyData.length === 0">
           <p>No monthly data available</p>
         </div>
-        <div class="chart-debug" v-else-if="monthlyData.every(m => parseFloat(m.amount) === 0)">
-          <p>No completed parking sessions with costs found in the last 6 months</p>
-          <small>Only completed parking sessions are included in spending calculations</small>
-        </div>
       </div>
     </div>
   </div>
@@ -227,18 +223,16 @@ const monthlyData = computed(() => {
     });
   }
   
-  // Calculate spending per month - only count completed reservations
+  // Calculate spending per month
   reservations.value.forEach(r => {
-    // Only count completed reservations with actual cost
-    if (r.parking_cost && r.status === 'completed' && r.leaving_timestamp) {
-      // Use leaving_timestamp as this is when the payment was actually made
-      const paymentDate = new Date(r.leaving_timestamp);
-      const paymentYear = paymentDate.getFullYear();
-      const paymentMonth = paymentDate.getMonth();
+    if (r.parking_cost && r.created_at) {
+      const reservationDate = new Date(r.created_at);
+      const reservationYear = reservationDate.getFullYear();
+      const reservationMonth = reservationDate.getMonth();
       
       // Find matching month in our 6-month window
       const monthIndex = monthsData.findIndex(m => 
-        m.year === paymentYear && m.month === paymentMonth
+        m.year === reservationYear && m.month === reservationMonth
       );
       
       if (monthIndex !== -1) {
@@ -470,20 +464,6 @@ onMounted(() => {
 watch(monthlyData, (newData) => {
   console.log('Monthly data updated:', newData);
   console.log('Max amount:', maxAmount.value);
-  
-  // Debug: Show reservation status breakdown
-  const statusCounts = {};
-  reservations.value.forEach(r => {
-    statusCounts[r.status] = (statusCounts[r.status] || 0) + 1;
-  });
-  console.log('Reservation status breakdown:', statusCounts);
-  
-  // Debug: Show completed reservations with costs
-  const completedWithCost = reservations.value.filter(r => 
-    r.status === 'completed' && r.parking_cost && r.leaving_timestamp
-  );
-  console.log('Completed reservations with cost:', completedWithCost.length);
-  console.log('Sample completed reservation:', completedWithCost[0]);
 }, { immediate: true });
 
 // Clean up event listener
