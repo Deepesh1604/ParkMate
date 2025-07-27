@@ -114,14 +114,27 @@
 
     <!-- Summary Chart -->
     <div class="chart-section">
-      <h3>Monthly Spending</h3>
+      <h3>Monthly Spending (Last 6 Months)</h3>
       <div class="chart-container">
         <div class="chart-bars">
           <div v-for="month in monthlyData" :key="month.month" class="chart-bar">
-            <div class="bar-fill" :style="{ height: (month.amount / maxAmount * 100) + '%' }"></div>
+            <div 
+              class="bar-fill" 
+              :style="{ 
+                height: parseFloat(month.amount) > 0 ? (parseFloat(month.amount) / maxAmount * 100) + '%' : '2px'
+              }"
+              :title="`${month.month}: $${month.amount}`"
+            ></div>
             <span class="bar-label">{{ month.month }}</span>
             <span class="bar-amount">${{ month.amount }}</span>
           </div>
+        </div>
+        <div class="chart-debug" v-if="monthlyData.length === 0">
+          <p>No monthly data available</p>
+        </div>
+        <div class="chart-debug" v-else-if="monthlyData.every(m => parseFloat(m.amount) === 0)">
+          <p>No completed parking sessions with costs found in the last 6 months</p>
+          <small>Only completed parking sessions are included in spending calculations</small>
         </div>
       </div>
     </div>
@@ -129,7 +142,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import axios from 'axios';
 
 const reservations = ref([]);
@@ -140,6 +153,8 @@ const loadHistory = async () => {
   try {
     const response = await axios.get('/api/user/my-reservations');
     reservations.value = response.data.reservations;
+    console.log('Loaded reservations:', reservations.value.length);
+    console.log('Sample reservation:', reservations.value[0]);
   } catch (error) {
     console.error('Error loading history:', error);
   }
@@ -194,35 +209,55 @@ const averageDuration = computed(() => {
 });
 
 const monthlyData = computed(() => {
-  const months = {};
   const now = new Date();
+  const monthsData = [];
   
-  // Initialize last 6 months
+  // Initialize last 6 months with proper date tracking
   for (let i = 5; i >= 0; i--) {
     const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const monthKey = date.toLocaleDateString('en-US', { month: 'short' });
-    months[monthKey] = 0;
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    
+    monthsData.push({
+      monthKey,
+      year,
+      month,
+      amount: 0
+    });
   }
   
-  // Calculate spending per month
+  // Calculate spending per month - only count completed reservations
   reservations.value.forEach(r => {
-    if (r.parking_cost) {
-      const date = new Date(r.created_at);
-      const monthKey = date.toLocaleDateString('en-US', { month: 'short' });
-      if (Object.prototype.hasOwnProperty.call(months, monthKey)) {
-        months[monthKey] += parseFloat(r.parking_cost);
+    // Only count completed reservations with actual cost
+    if (r.parking_cost && r.status === 'completed' && r.leaving_timestamp) {
+      // Use leaving_timestamp as this is when the payment was actually made
+      const paymentDate = new Date(r.leaving_timestamp);
+      const paymentYear = paymentDate.getFullYear();
+      const paymentMonth = paymentDate.getMonth();
+      
+      // Find matching month in our 6-month window
+      const monthIndex = monthsData.findIndex(m => 
+        m.year === paymentYear && m.month === paymentMonth
+      );
+      
+      if (monthIndex !== -1) {
+        monthsData[monthIndex].amount += parseFloat(r.parking_cost);
       }
     }
   });
   
-  return Object.entries(months).map(([month, amount]) => ({
-    month,
-    amount: amount.toFixed(2)
+  // Return formatted data
+  return monthsData.map(m => ({
+    month: m.monthKey,
+    amount: m.amount.toFixed(2)
   }));
 });
 
 const maxAmount = computed(() => {
-  return Math.max(...monthlyData.value.map(m => parseFloat(m.amount)), 1);
+  const amounts = monthlyData.value.map(m => parseFloat(m.amount));
+  const max = Math.max(...amounts);
+  return max > 0 ? max : 100; // Use 100 as default if no data
 });
 
 const filterHistory = () => {
@@ -430,6 +465,26 @@ onMounted(() => {
   loadHistory();
   document.addEventListener('click', handleClickOutside);
 });
+
+// Debug watcher for monthly data
+watch(monthlyData, (newData) => {
+  console.log('Monthly data updated:', newData);
+  console.log('Max amount:', maxAmount.value);
+  
+  // Debug: Show reservation status breakdown
+  const statusCounts = {};
+  reservations.value.forEach(r => {
+    statusCounts[r.status] = (statusCounts[r.status] || 0) + 1;
+  });
+  console.log('Reservation status breakdown:', statusCounts);
+  
+  // Debug: Show completed reservations with costs
+  const completedWithCost = reservations.value.filter(r => 
+    r.status === 'completed' && r.parking_cost && r.leaving_timestamp
+  );
+  console.log('Completed reservations with cost:', completedWithCost.length);
+  console.log('Sample completed reservation:', completedWithCost[0]);
+}, { immediate: true });
 
 // Clean up event listener
 onBeforeUnmount(() => {
@@ -721,6 +776,18 @@ onBeforeUnmount(() => {
   font-size: 0.75rem;
   font-weight: bold;
   color: #2c3e50;
+}
+
+.chart-debug {
+  text-align: center;
+  color: #6c757d;
+  font-style: italic;
+  padding: 2rem;
+}
+
+.bar-fill:hover {
+  opacity: 0.8;
+  cursor: pointer;
 }
 
 @media (max-width: 768px) {
