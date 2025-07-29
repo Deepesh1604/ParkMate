@@ -365,12 +365,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Celery contributors for background task processing
 - MailHog for email testing capabilities
 
-## 📞 Support
-
-For support and questions:
-- Create an issue on GitHub
-- Email: support@parkmate.com
-- Documentation: [Wiki](https://github.com/Deepesh1604/Parkmate/wiki)
 
 ## 🔮 Future Enhancements
 
