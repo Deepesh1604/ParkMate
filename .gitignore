@@ -1,0 +1,112 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+
+# C extensions
+*.so
+
+# Environment variables and secrets
+.env
+*.env
+*.secret
+credentials.json
+
+# Flask specific
+instance/
+*.db
+*.sqlite3
+
+# Flask cache/logs
+*.log
+*.pot
+*.pyc
+*.bak
+*.tmp
+
+# Celery beat schedule and logs
+celerybeat-schedule
+celerybeat.pid
+celery_worker.log
+celery_beat.log
+
+# Redis dumps
+dump.rdb
+*.rdb
+
+# Email service (MailHog) logs/temp
+mailhog.log
+
+# Exported CSV or reports
+exports/
+*.csv
+
+# Frontend - Vue.js
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.vite/
+*.local
+*.DS_Store
+
+# VSCode / PyCharm / IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS and system files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Test and debug files
+test_*.py
+debug.log
+coverage.xml
+htmlcov/
+.cache/
+.tox/
+
+# Python virtual environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# PyInstaller
+*.spec
+build/
+dist/
+*.exe
+*.msi
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# Development and testing
+.pytest_cache/
+.coverage
+.nyc_output
+
+# MailHog binary (keep the executable)
+# mailhog
+
+# Git folder
+.git/
+
+# Project specific
+main_organized.py
+test_monthly_report.sh

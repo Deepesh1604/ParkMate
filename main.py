@@ -1,16 +1,4 @@
-# ====================================================================
-# PARKING MANAGEMENT SYSTEM - PARKMATE
-# ====================================================================
-# A comprehensive parking lot management system with Flask backend
-# Features: User management, Parking lot operations, Real-time booking,
-# Analytics, Email notifications, Background tasks with Celery
-# ====================================================================
-
-# ====================================================================
 # IMPORTS AND DEPENDENCIES
-# ====================================================================
-
-# Standard Library Imports
 import sqlite3
 import hashlib
 import json
@@ -51,26 +39,18 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 
-# ====================================================================
-# LOGGING CONFIGURATION
-# ====================================================================
 
+# LOGGING CONFIGURATION
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ====================================================================
-# FLASK APPLICATION SETUP
-# ====================================================================
 
+# FLASK APPLICATION SETUP
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
 app.secret_key = 'parking_lot_secret_key_2024'
 
-# ====================================================================
-# CONFIGURATION SETTINGS
-# ====================================================================
-
-# Email Configuration for MailHog
+# CONFIGURATION SETTINGS,  Email Configuration for MailHog
 EMAIL_HOST = 'localhost'
 EMAIL_PORT = 1025
 EMAIL_USERNAME = 'admin@parkmate.com'
@@ -81,13 +61,10 @@ EMAIL_FROM = 'admin@parkmate.com'
 GOOGLE_CHAT_WEBHOOK = os.environ.get('GOOGLE_CHAT_WEBHOOK')
 
 # Cache Configuration
-CACHE_TIMEOUT = 300  # 5 minutes
-ANALYTICS_CACHE_TIMEOUT = 900  # 15 minutes
+CACHE_TIMEOUT = 300 
+ANALYTICS_CACHE_TIMEOUT = 900
 
-# ====================================================================
 # REDIS CONFIGURATION
-# ====================================================================
-
 redis_client = redis.Redis(
     host='localhost', 
     port=6379, 
@@ -96,11 +73,7 @@ redis_client = redis.Redis(
     socket_connect_timeout=5,
     socket_timeout=5
 )
-
-# ====================================================================
 # CELERY CONFIGURATION
-# ====================================================================
-
 def make_celery(app):
     """Create and configure Celery instance"""
     celery = Celery(
@@ -110,62 +83,54 @@ def make_celery(app):
     )
     celery.conf.update(app.config)
     
-    # Configure beat schedule
     celery.conf.beat_schedule = {
         'cleanup-expired-reservations': {
             'task': 'main.cleanup_expired_reservations',
-            'schedule': 20.0,  # Every hour
+            'schedule': 20.0,  
         },
         'generate-daily-report': {
             'task': 'main.generate_daily_report',
-            'schedule': 20.0,  # Every 24 hours
+            'schedule': 20.0,  
         },
         'optimize-parking-allocation': {
             'task': 'main.optimize_parking_allocation',
-            'schedule': 20.0,  # Every 6 hours
+            'schedule': 20.0,  
         },
         'send-parking-reminders': {
             'task': 'main.send_parking_reminders',
-            'schedule': 20.0,  # Every 15 minutes
+            'schedule': 20.0,  
         },
         'daily-mail-reminder-test': {
             'task': 'main.send_daily_reminders',
-            'schedule': 20.0,  # Every 30 minutes for testing (less frequent)
+            'schedule': 20.0, 
         },
         'daily-mail-reminder': {
             'task': 'main.send_daily_reminders',
-            'schedule': crontab(minute=0, hour=18)  # Daily at 6 PM
+            'schedule': crontab(minute=0, hour=18)  
         },
         'monthly-mail-report-test': {
             'task': 'main.generate_monthly_activity_report',
-            'schedule': 20.0,  # Every hour for testing (less frequent)
+            'schedule': 20.0, 
         },
         'monthly-mail-report': {
             'task': 'main.generate_monthly_activity_report',
-            'schedule': crontab(minute=0, hour=0, day_of_month=1)  # Monthly on 1st at midnight
+            'schedule': crontab(minute=0, hour=0, day_of_month=1)  
         },
         'daily-test-reminder': {
             'task': 'main.send_test_daily_reminders',
-            'schedule': 20.0,  # Every 15 minutes for testing (less frequent)
+            'schedule': 20.0,  
         }
     }
-    
-    celery.conf.timezone = 'Asia/Kolkata'  # Set timezone for scheduling    
-    
+    celery.conf.timezone = 'Asia/Kolkata'    
     class ContextTask(celery.Task):
         def __call__(self, *args, **kwargs):
             with app.app_context():
-                return self.run(*args, **kwargs)
-    
+                return self.run(*args, **kwargs)    
     celery.Task = ContextTask
     return celery
-
 celery = make_celery(app)
 
-# ====================================================================
 # CACHE MANAGEMENT UTILITIES
-# ====================================================================
-
 def cache_key(*args):
     """Generate cache key from arguments"""
     return ':'.join(str(arg) for arg in args)
@@ -216,8 +181,7 @@ def robust_cache_invalidation():
             '*admin*',
             '*analytics*',
             '*reservations*'
-        ]
-        
+        ]       
         total_cleared = 0
         for pattern in patterns_to_clear:
             keys = redis_client.keys(pattern)
@@ -232,15 +196,11 @@ def robust_cache_invalidation():
         logger.warning(f"Cache invalidation error: {e}")
         return 0
 
-# ====================================================================
 # DATABASE INITIALIZATION AND UTILITIES
-# ====================================================================
-
 def init_db():
     """Initialize SQLite database with all required tables"""
     conn = sqlite3.connect('parking_lot.db')
     cursor = conn.cursor()
-    
     # Users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -253,7 +213,6 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
     # Parking Lots table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS parking_lots (
@@ -266,7 +225,6 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
     # Parking Spots table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS parking_spots (
@@ -278,7 +236,6 @@ def init_db():
             FOREIGN KEY (lot_id) REFERENCES parking_lots (id)
         )
     ''')
-    
     # Reservations table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS reservations (
@@ -294,7 +251,6 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    
     # Batch Jobs table for tracking background tasks
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS batch_jobs (
@@ -309,7 +265,6 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
     # User Preferences table for reminder settings
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS user_preferences (
@@ -323,7 +278,6 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    
     # CSV Export Jobs table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS csv_export_jobs (
@@ -336,7 +290,6 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS parking_reminders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -348,7 +301,6 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    
     # Create default admin user
     admin_password = hashlib.sha256('admin123'.encode()).hexdigest()
     cursor.execute('''
@@ -380,14 +332,14 @@ def ensure_database_consistency():
         conn = get_db()
         cursor = conn.cursor()
         
-        # Fix orphaned reservations
+        #orphaned reservations
         cursor.execute("""
             DELETE FROM reservations 
             WHERE user_id NOT IN (SELECT id FROM users)
         """)
         orphaned_count = cursor.rowcount
         
-        # Fix inconsistent spot statuses
+        #inconsistent spot statuses
         cursor.execute("""
             UPDATE parking_spots 
             SET status = 'A' 
@@ -419,10 +371,7 @@ def ensure_database_consistency():
         logger.error(f"Database consistency check failed: {e}")
         return False
 
-# ====================================================================
 # EMAIL AND NOTIFICATION UTILITIES
-# ====================================================================
-
 def check_mailhog_status():
     """Check if MailHog is running and accessible"""
     try:
@@ -439,15 +388,12 @@ def ensure_mailhog_running():
     if check_mailhog_status():
         logger.info("MailHog is already running")
         return True
-    
     logger.warning("MailHog not running, attempting to start...")
-    
     try:
         mailhog_path = os.path.join(os.getcwd(), 'mailhog')
         if not os.path.exists(mailhog_path):
             logger.error(f"MailHog executable not found at: {mailhog_path}")
             return False
-            
         logger.info(f"Starting MailHog from: {mailhog_path}")
         
         cmd = [
@@ -458,14 +404,12 @@ def ensure_mailhog_running():
         ]
         
         logger.info(f"MailHog command: {' '.join(cmd)}")
-        
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             cwd=os.getcwd()
         )
-        
         logger.info(f"MailHog process started with PID: {process.pid}")
         
         max_wait = 10
@@ -556,7 +500,6 @@ def send_email(to_email, subject, body, attachment=None, retry_count=3):
     return False
 
 def send_google_chat_message(message):
-    """Send message to Google Chat webhook"""
     try:
         if not GOOGLE_CHAT_WEBHOOK:
             logger.warning("Google Chat webhook URL not configured")
@@ -575,10 +518,7 @@ def send_google_chat_message(message):
         logger.error(f"Error sending Google Chat message: {e}")
         return False
 
-# ====================================================================
 # GRAPH GENERATION UTILITIES
-# ====================================================================
-
 def generate_graph_base64(fig):
     """Convert matplotlib figure to base64 string"""
     buffer = BytesIO()
@@ -590,19 +530,13 @@ def generate_graph_base64(fig):
     plt.close(fig)
     return base64.b64encode(image_png).decode('utf-8')
 
-# ====================================================================
 # CELERY BACKGROUND TASKS
-# ====================================================================
-
 @celery.task(bind=True)
 def cleanup_expired_reservations(self):
-    """Background task to cleanup expired reservations"""
     try:
         conn = get_db()
         cursor = conn.cursor()
-        
         expiry_time = datetime.now() - timedelta(hours=24)
-        
         cursor.execute('''
             SELECT r.id, r.spot_id FROM reservations r
             WHERE r.status = 'active' 
@@ -615,12 +549,10 @@ def cleanup_expired_reservations(self):
         if expired_reservations:
             reservation_ids = [r[0] for r in expired_reservations]
             spot_ids = [r[1] for r in expired_reservations]
-            
             cursor.executemany(
                 'UPDATE reservations SET status = "expired" WHERE id = ?',
                 [(rid,) for rid in reservation_ids]
             )
-            
             cursor.executemany(
                 'UPDATE parking_spots SET status = "A" WHERE id = ?',
                 [(sid,) for sid in spot_ids]
@@ -630,9 +562,7 @@ def cleanup_expired_reservations(self):
             
             invalidate_cache_pattern('*parking_lots*')
             invalidate_cache_pattern('*analytics*')
-            
-            logger.info(f"Cleaned up {len(expired_reservations)} expired reservations")
-            
+            logger.info(f"Cleaned up {len(expired_reservations)} expired reservations")            
         conn.close()
         return f"Cleaned up {len(expired_reservations)} expired reservations"
         
@@ -641,8 +571,7 @@ def cleanup_expired_reservations(self):
         raise
 
 @celery.task(bind=True)
-def generate_daily_report(self, date_str=None):
-    """Generate daily parking report"""
+def generate_daily_report(self, date_str=None): #parking
     try:
         if not date_str:
             date_str = datetime.now().strftime('%Y-%m-%d')
@@ -683,8 +612,7 @@ def generate_daily_report(self, date_str=None):
             'daily_summary': daily_stats,
             'lot_statistics': lot_stats,
             'generated_at': datetime.now().isoformat()
-        }
-        
+        }       
         report_key = f"daily_report:{date_str}"
         redis_client.setex(report_key, 86400, json.dumps(report, default=str))
         
@@ -758,18 +686,13 @@ def optimize_parking_allocation(self):
 
 @celery.task(bind=True)
 def send_daily_reminders(self):
-    """
-    Daily scheduled job - Send reminders to users
-    Checks if user hasn't visited recently or new parking lots are available
-    """
     try:
         logger.info("🔄 Starting daily reminder job...")
         
         conn = get_db()
         conn.row_factory = dict_factory
         cursor = conn.cursor()
-        
-        # Get all non-admin users with email addresses
+        # Fetch users who have opted in for reminders
         cursor.execute('''
             SELECT 
                 u.id, u.username, u.email, u.phone,
@@ -780,7 +703,6 @@ def send_daily_reminders(self):
             WHERE u.is_admin = 0 AND u.email IS NOT NULL AND u.email != ''
             AND (up.reminder_enabled = 1 OR up.reminder_enabled IS NULL)
         ''')
-        
         users = cursor.fetchall()
         seven_days_ago = datetime.now() - timedelta(days=7)
         inactive_users = []
@@ -799,7 +721,7 @@ def send_daily_reminders(self):
             if recent_reservations == 0:
                 inactive_users.append(user)
         
-        # For testing: if no inactive users, add first 3 users for demo
+        # For testing: if no inactive users
         if len(inactive_users) == 0 and len(users) > 0:
             inactive_users = users[:3]  # Take first 3 users for testing
             logger.info(f"No inactive users found, using first {len(inactive_users)} users for testing")
@@ -841,7 +763,6 @@ def send_daily_reminders(self):
                             <h3 style="color: #495057; margin-top: 0;">🅿️ Available Parking Lots</h3>
             """
             
-            # Add available lots info
             for i, lot in enumerate(available_lots[:3]):  # Show top 3 lots
                 body += f"""
                             <div style="border-left: 4px solid #667eea; padding-left: 15px; margin: 15px 0;">
@@ -877,15 +798,13 @@ def send_daily_reminders(self):
             </html>
             """
             
-            # Send email
             if send_email(user['email'], subject, body):
                 sent_count += 1
                 logger.info(f"Sent reminder email to {user['username']} ({user['email']})")
         
-        # Also send notifications about available lots to active users (who have used the system recently)
         active_users = [user for user in users if user not in inactive_users]
         
-        # For testing: if we have fewer than 2 active users, use some users anyway
+        # For testing: if we have fewer than 2 active users
         if len(active_users) < 2 and len(users) > len(inactive_users):
             active_users = users[len(inactive_users):len(inactive_users)+2]  # Take next 2 users
             logger.info(f"Using {len(active_users)} users for active user notifications")
@@ -900,10 +819,8 @@ def send_daily_reminders(self):
             
             today_bookings = cursor.fetchone()['today_count']
             
-            # For testing: send to users regardless of today's bookings (comment out the condition)
-            # Only send to users who haven't booked today
-            # if today_bookings == 0 and available_lots:
-            if available_lots:  # Send to all users for testing
+            # Only to users who haven't booked today, if today_bookings == 0 and available_lots:
+            if available_lots:  # for testing
                 subject = "New Parking Opportunities Available! 🅿️"
                 
                 body = f"""
@@ -923,7 +840,7 @@ def send_daily_reminders(self):
                                 <h3 style="color: #495057; margin-top: 0;">🏢 Available Locations</h3>
                 """
                 
-                for lot in available_lots[:2]:  # Show top 2 lots for active users
+                for lot in available_lots[:2]:
                     body += f"""
                                 <div style="border-left: 4px solid #56ab2f; padding-left: 15px; margin: 15px 0;">
                                     <h4 style="margin: 0; color: #333;">{lot['location_name']}</h4>
@@ -971,7 +888,7 @@ def send_test_daily_reminders(self):
         conn.row_factory = dict_factory
         cursor = conn.cursor()
         
-        # Get first 3 users with email addresses
+        #first 3 users with email addresses
         cursor.execute('''
             SELECT id, username, email
             FROM users u
@@ -1051,7 +968,7 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
         conn.row_factory = dict_factory
         cursor = conn.cursor()
         
-        # Get users with email addresses
+        #getting users with email addresses
         if user_id:
             cursor.execute('SELECT * FROM users WHERE id = ? AND is_admin = 0 AND email IS NOT NULL AND email != ""', (user_id,))
             users = cursor.fetchall()
@@ -1065,7 +982,7 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
         
         for user in users:
             try:
-                # Get monthly statistics
+                #genrating monthly statistics
                 cursor.execute('''
                     SELECT 
                         COUNT(*) as total_bookings,
@@ -1084,12 +1001,12 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
                 
                 monthly_stats = cursor.fetchone()
                 
-                # Skip users with no activity this month
+                #skips users with no activity this month
                 if not monthly_stats or monthly_stats['total_bookings'] == 0:
                     logger.info(f"Skipping {user['username']} - no activity this month")
                     continue
                 
-                # Get most used parking lot
+                #show most used parking lot
                 cursor.execute('''
                     SELECT 
                         pl.prime_location_name,
@@ -1107,7 +1024,7 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
                 
                 most_used_lot = cursor.fetchone()
                 
-                # Get daily usage pattern
+                #shows daily usage pattern
                 cursor.execute('''
                     SELECT 
                         DATE(created_at) as date,
@@ -1122,7 +1039,7 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
                 
                 daily_usage = cursor.fetchall()
                 
-                # Create enhanced HTML report
+                #create enhanced HTML report
                 html_report = f"""
                 <!DOCTYPE html>
                 <html>
@@ -1391,8 +1308,7 @@ def send_parking_reminders(self):
         conn.row_factory = dict_factory
         cursor = conn.cursor()
         
-        # Find reservations that are active but user hasn't parked yet
-        # Send reminder after 30 minutes of booking
+        #finds reservations that are active but user hasn't parked yet, send reminder after 30 minutes of booking
         reminder_time = datetime.now() - timedelta(minutes=30)
         
         cursor.execute('''
@@ -1422,16 +1338,16 @@ def send_parking_reminders(self):
         
         for reservation in pending_reservations:
             try:
-                # Check if we already sent a reminder for this reservation
+                # check if we already sent a reminder for this reservation
                 cursor.execute('''
                     SELECT id FROM parking_reminders 
                     WHERE reservation_id = ? AND reminder_type = 'parking_pending'
                 ''', (reservation['reservation_id'],))
                 
                 if cursor.fetchone():
-                    continue  # Already sent reminder
+                    continue
                 
-                # Calculate time since booking
+                #calculate time since booking
                 booking_time = datetime.fromisoformat(reservation['created_at'])
                 time_elapsed = datetime.now() - booking_time
                 hours_elapsed = time_elapsed.total_seconds() / 3600
@@ -1516,13 +1432,13 @@ def send_parking_reminders(self):
                 </html>
                 """
                 
-                # Send the reminder email
+                # sends the reminder email
                 if send_email(
                     reservation['email'], 
                     f"🚗 Parking Reminder - Spot #{reservation['spot_number']} Reserved", 
                     reminder_email_body
                 ):
-                    # Record that we sent this reminder
+                    # Record that i sent this reminder
                     cursor.execute('''
                         INSERT INTO parking_reminders 
                         (reservation_id, user_id, reminder_type, sent_at) 
@@ -1548,10 +1464,7 @@ def send_parking_reminders(self):
         logger.error(f"Error in send_parking_reminders: {e}")
         raise
 
-# ====================================================================
 # AUTHENTICATION API ENDPOINTS
-# ====================================================================
-
 @app.route('/api/register', methods=['POST'])
 def register():
     """User registration endpoint"""
@@ -1581,7 +1494,6 @@ def register():
         user_id = cursor.lastrowid
         conn.commit()
         conn.close()
-        
         welcome_email_body = f"""
         <html>
         <body>
@@ -1604,15 +1516,12 @@ def register():
                 <li>💰 View pricing and payment options</li>
                 <li>📊 Track your parking history</li>
             </ul>
-            
             <p>If you need any assistance, feel free to contact our support team.</p>
-            
             <p>Happy Parking!<br>
             <strong>The ParkMate Team</strong></p>
         </body>
         </html>
         """
-        
         if email:
             send_email(email, "Welcome to ParkMate! 🚗", welcome_email_body)
         
@@ -1623,7 +1532,6 @@ def register():
             'message': 'User registered successfully',
             'user_id': user_id
         }), 201
-        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1652,11 +1560,9 @@ def login():
         conn.close()
         
         if not user:
-            return jsonify({'error': 'Invalid credentials'}), 401
-        
+            return jsonify({'error': 'Invalid credentials'}), 401       
         session['user_id'] = user['id']
         session['is_admin'] = user['is_admin']
-        
         return jsonify({
             'message': 'Login successful',
             'user': user
@@ -1671,10 +1577,7 @@ def logout():
     session.clear()
     return jsonify({'message': 'Logged out successfully'}), 200
 
-# ====================================================================
 # ADMIN API ENDPOINTS
-# ====================================================================
-
 @app.route('/api/admin/parking-lots', methods=['GET', 'POST'])
 def admin_parking_lots():
     """Admin parking lots management endpoint"""
@@ -1723,7 +1626,6 @@ def admin_parking_lots():
             ''', (location_name, price, address, pin_code, max_spots))
             
             lot_id = cursor.lastrowid
-            
             for spot_num in range(1, max_spots + 1):
                 cursor.execute('''
                     INSERT INTO parking_spots (lot_id, spot_number, status)
@@ -1766,9 +1668,7 @@ def admin_parking_lots():
                             <li>📈 Analytics data has been updated</li>
                         </ul>
                     </div>
-                    
                     <p>The parking lot is now live and ready for reservations!</p>
-                    
                     <p>Best regards,<br>
                     <strong>ParkMate System</strong></p>
                 </body>
@@ -2225,7 +2125,7 @@ def admin_analytics_dashboard_data():
         conn.row_factory = dict_factory
         cursor = conn.cursor()
         
-        # Occupancy data
+        #occupancy data
         cursor.execute('''
             SELECT 
                 pl.id,
@@ -2241,7 +2141,7 @@ def admin_analytics_dashboard_data():
         ''')
         occupancy_data = cursor.fetchall()
         
-        # Revenue data (last 30 days)
+        #revenue data (last 30 days)
         cursor.execute('''
             SELECT 
                 DATE(created_at) as date,
@@ -2254,7 +2154,7 @@ def admin_analytics_dashboard_data():
         ''')
         revenue_data = cursor.fetchall()
         
-        # Monthly trends (last 12 months)
+        #monthly trends (last 12 months)
         cursor.execute('''
             SELECT 
                 strftime('%Y-%m', created_at) as month,
@@ -2267,7 +2167,7 @@ def admin_analytics_dashboard_data():
         ''')
         monthly_trends = cursor.fetchall()
         
-        # Hourly usage pattern
+        #hourly usage pattern
         cursor.execute('''
             SELECT 
                 strftime('%H', created_at) as hour,
@@ -2279,7 +2179,7 @@ def admin_analytics_dashboard_data():
         ''')
         hourly_usage = cursor.fetchall()
         
-        # Duration analysis
+        #duration analysis
         cursor.execute('''
             SELECT 
                 CASE 
@@ -2298,7 +2198,7 @@ def admin_analytics_dashboard_data():
         ''')
         duration_analysis = cursor.fetchall()
         
-        # Top users (last 30 days)
+        #top users (last 30 days)
         cursor.execute('''
             SELECT 
                 u.username,
@@ -2315,7 +2215,7 @@ def admin_analytics_dashboard_data():
         
         conn.close()
         
-        # Provide default data if no data exists
+        #gives default data if no data exists
         if not occupancy_data:
             occupancy_data = [
                 {
@@ -2382,7 +2282,7 @@ def admin_analytics_dashboard_data():
             import random
             hourly_usage = []
             for hour in range(24):
-                # Simulate realistic parking patterns
+                #simulates realistic parking patterns
                 if 6 <= hour <= 9 or 17 <= hour <= 19:  # Peak hours
                     reservations = random.randint(10, 30)
                 elif 10 <= hour <= 16:  # Day time
@@ -2548,10 +2448,7 @@ def admin_analytics_export_csv():
         logger.error(f"Error in admin_analytics_export_csv: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
-# ====================================================================
 # GRAPH GENERATION API ENDPOINTS
-# ====================================================================
-
 @app.route('/api/admin/graphs/occupancy', methods=['GET'])
 def generate_occupancy_graph():
     """Generate occupancy analytics graph"""
@@ -2756,10 +2653,7 @@ def generate_revenue_graph():
         logger.error(f"Error generating revenue graph: {e}")
         return jsonify({'error': 'Failed to generate graph'}), 500
 
-# ====================================================================
 # USER API ENDPOINTS
-# ====================================================================
-
 @app.route('/api/user/parking-lots', methods=['GET'])
 def user_parking_lots():
     """Get available parking lots for users"""
@@ -3019,7 +2913,7 @@ def user_release_spot():
             
             cursor.execute('UPDATE parking_spots SET status = "A" WHERE id = ?', (reservation['spot_id'],))
             
-            # Get user details for email notification before committing
+            #gets user details for email notification before committing
             cursor.execute('SELECT email, username FROM users WHERE id = ?', (session['user_id'],))
             user_details = cursor.fetchone()
             
@@ -3029,7 +2923,7 @@ def user_release_spot():
             
             robust_cache_invalidation()
             
-            # Send release confirmation email
+            #sends release confirmation email
             if user_details:
                 release_email_body = f"""
                 <html>
@@ -3087,7 +2981,7 @@ def user_release_spot():
                 </html>
                 """
                 
-                # Send the email asynchronously
+                #send the email asynchronously
                 try:
                     send_email(user_details['email'], f"Parking Session Completed - Spot #{reservation['spot_number']}", release_email_body)
                     logger.info(f"Release confirmation email sent to {user_details['email']}")
@@ -3209,10 +3103,7 @@ def user_analytics():
     analytics_data = get_user_analytics()
     return jsonify(analytics_data), 200
 
-# ====================================================================
 # UTILITY AND MANAGEMENT API ENDPOINTS
-# ====================================================================
-
 @app.route('/api/user/preferences', methods=['GET', 'POST'])
 def user_preferences():
     """Manage user notification preferences"""
@@ -3427,7 +3318,7 @@ def trigger_parking_reminders():
         return jsonify({'error': 'Admin access required'}), 403
     
     try:
-        # Trigger the Celery task
+        #triggers th Celery task
         task = send_parking_reminders.delay()
         return jsonify({
             'message': 'Parking reminders task triggered successfully',
@@ -3445,11 +3336,11 @@ def trigger_monthly_reports():
     
     try:
         data = request.json if request.json else {}
-        user_id = data.get('user_id')  # Optional: specific user ID
-        month = data.get('month')      # Optional: specific month
-        year = data.get('year')        # Optional: specific year
+        user_id = data.get('user_id') 
+        month = data.get('month')     
+        year = data.get('year')        
         
-        # Trigger the Celery task
+        #triggers Celery task
         if user_id:
             task = generate_monthly_activity_report.delay(user_id, month, year)
             message = f'Monthly report task triggered for user ID {user_id}'
@@ -3470,10 +3361,7 @@ def trigger_monthly_reports():
         logger.error(f"Error triggering monthly reports: {e}")
         return jsonify({'error': str(e)}), 500
 
-# ====================================================================
 # APPLICATION ENTRY POINT
-# ====================================================================
-
 if __name__ == '__main__':
     init_db()
     print("=" * 60)
