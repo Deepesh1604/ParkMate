@@ -189,6 +189,7 @@
 </template>
 
 <script>
+import axios from 'axios'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -232,7 +233,7 @@ export default {
       statusType: '',
       showExportMenu: false,
       chartKey: 0,
-      API_BASE: 'http://localhost:5001',
+      API_BASE: 'http://localhost:5000',
       
       // Chart colors
       colors: {
@@ -620,24 +621,42 @@ export default {
       this.loading = true
       this.statusMessage = ''
       
+      console.log('🔍 Fetching dashboard data from:', `${this.API_BASE}/api/admin/analytics/dashboard-data`)
+      
       try {
         const response = await fetch(`${this.API_BASE}/api/admin/analytics/dashboard-data`, {
           method: 'GET',
-          credentials: 'include'
+          credentials: 'include',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
         })
+        
+        console.log('📡 Response status:', response.status)
+        console.log('📡 Response headers:', response.headers)
         
         if (response.ok) {
           this.dashboardData = await response.json()
+          console.log('✅ Dashboard data received:', this.dashboardData)
           this.chartKey++ // Force chart re-render
           this.showStatus('Data refreshed successfully!', 'success')
+        } else if (response.status === 401) {
+          this.showStatus('Session expired. Please login again as admin.', 'error')
         } else if (response.status === 403) {
           this.showStatus('Access denied. Please login as admin.', 'error')
         } else {
-          throw new Error(`HTTP ${response.status}`)
+          const errorText = await response.text()
+          console.error('❌ API Error:', errorText)
+          this.showStatus(`Failed to load dashboard data: HTTP ${response.status}`, 'error')
         }
       } catch (error) {
-        console.error('Error fetching data:', error)
-        this.showStatus('Failed to load dashboard data.', 'error')
+        console.error('❌ Network error:', error)
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+          this.showStatus('Cannot connect to server. Please ensure the backend is running on port 5000.', 'error')
+        } else {
+          this.showStatus('Failed to load dashboard data. Please try again.', 'error')
+        }
       } finally {
         this.loading = false
       }

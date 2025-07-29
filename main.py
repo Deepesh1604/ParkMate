@@ -2,6 +2,9 @@ import sqlite3
 import hashlib
 import json
 import redis
+import socket
+import time
+import subprocess
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, session
 from flask_cors import CORS
@@ -13,13 +16,6 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-# Load environment variables from .env file
-try:
-    from dotenv import load_dotenv
-    load_dotenv()  # Load environment variables from .env file
-    print("✅ Environment variables loaded from .env file")
-except ImportError:
-    print("⚠️ python-dotenv not installed. Run: pip install python-dotenv")
 import csv
 import io
 import requests
@@ -42,12 +38,12 @@ app = Flask(__name__)
 CORS(app, supports_credentials=True)
 app.secret_key = 'parking_lot_secret_key_2024'
 
-# Email configuration
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USERNAME = os.environ.get('EMAIL_USERNAME', 'your-email@gmail.com')
-EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', 'your-app-password')
-EMAIL_FROM = EMAIL_USERNAME
+# Email configuration for MailHog
+EMAIL_HOST = 'localhost'
+EMAIL_PORT = 1025  # MailHog SMTP port (standard)
+EMAIL_USERNAME = 'admin@parkmate.com'  # Email address for MailHog
+EMAIL_PASSWORD = ''  # No password needed for MailHog
+EMAIL_FROM = 'admin@parkmate.com'
 
 # Google Chat Webhook URL (set via environment variable)
 GOOGLE_CHAT_WEBHOOK = os.environ.get('GOOGLE_CHAT_WEBHOOK')
@@ -129,6 +125,78 @@ def invalidate_cache_pattern(pattern):
             logger.info(f"Invalidated {len(keys)} cache keys matching {pattern}")
     except redis.RedisError as e:
         logger.warning(f"Cache invalidation error: {e}")
+
+def robust_cache_invalidation():
+    """More comprehensive cache invalidation"""
+    try:
+        patterns_to_clear = [
+            '*parking_lots*',
+            '*user*',
+            '*admin*',
+            '*analytics*',
+            '*reservations*'
+        ]
+        
+        total_cleared = 0
+        for pattern in patterns_to_clear:
+            keys = redis_client.keys(pattern)
+            if keys:
+                redis_client.delete(*keys)
+                total_cleared += len(keys)
+                logger.info(f"Cleared {len(keys)} keys matching {pattern}")
+        
+        logger.info(f"Total cache keys cleared: {total_cleared}")
+        return total_cleared
+    except redis.RedisError as e:
+        logger.warning(f"Cache invalidation error: {e}")
+        return 0
+
+def ensure_database_consistency():
+    """Ensure database consistency after operations"""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Fix orphaned reservations (reservations without users)
+        cursor.execute("""
+            DELETE FROM reservations 
+            WHERE user_id NOT IN (SELECT id FROM users)
+        """)
+        orphaned_count = cursor.rowcount
+        
+        # Fix inconsistent spot statuses
+        # 1. Free spots that are marked occupied but have no active reservation
+        cursor.execute("""
+            UPDATE parking_spots 
+            SET status = 'A' 
+            WHERE status = 'O' 
+            AND id NOT IN (
+                SELECT spot_id FROM reservations WHERE status = 'active'
+            )
+        """)
+        freed_spots = cursor.rowcount
+        
+        # 2. Mark spots as occupied if they have active reservations
+        cursor.execute("""
+            UPDATE parking_spots 
+            SET status = 'O' 
+            WHERE status = 'A' 
+            AND id IN (
+                SELECT spot_id FROM reservations WHERE status = 'active'
+            )
+        """)
+        occupied_spots = cursor.rowcount
+        
+        conn.commit()
+        conn.close()
+        
+        if orphaned_count > 0 or freed_spots > 0 or occupied_spots > 0:
+            logger.info(f"Database consistency check: {orphaned_count} orphaned reservations, {freed_spots} spots freed, {occupied_spots} spots marked occupied")
+        
+        return True
+    except Exception as e:
+        logger.error(f"Database consistency check failed: {e}")
+        return False
 
 # Database initialization
 def init_db():
@@ -229,47 +297,6 @@ def init_db():
             completed_at TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
-    ''')
-    
-    # Create Email Notifications Log table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS email_notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            email_address TEXT NOT NULL,
-            email_type TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            status TEXT DEFAULT 'sent',
-            error_message TEXT,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-    ''')
-    
-    # Create Notification Templates table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS notification_templates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            template_name TEXT UNIQUE NOT NULL,
-            template_type TEXT NOT NULL,
-            subject_template TEXT NOT NULL,
-            body_template TEXT NOT NULL,
-            is_active INTEGER DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Insert default notification templates
-    cursor.execute('''
-        INSERT OR IGNORE INTO notification_templates 
-        (template_name, template_type, subject_template, body_template)
-        VALUES 
-        ('welcome', 'email', '🎉 Welcome to ParkMate - Your Smart Parking Journey Begins!', 'default_welcome_template'),
-        ('daily_reminder', 'email', '🔔 Daily Parking Reminder - ParkMate', 'default_reminder_template'),
-        ('monthly_report', 'email', '📊 Your ParkMate Monthly Report - {{month}} {{year}}', 'default_monthly_template'),
-        ('csv_export', 'email', '📄 Your Parking Data Export is Ready!', 'default_export_template'),
-        ('booking_confirmation', 'email', '✅ Parking Spot Reserved Successfully', 'default_booking_template')
     ''')
     
     # Create admin user if not exists
@@ -469,61 +496,160 @@ def optimize_parking_allocation(self):
         raise
 
 # Helper functions for notifications
-def send_email(to_email, subject, body, attachment=None, user_id=None, email_type='general'):
-    """Send email notification with logging"""
+def check_mailhog_status():
+    """Check if MailHog is running and accessible"""
+    import socket
     try:
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_FROM
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        
-        msg.attach(MIMEText(body, 'html'))
-        
-        if attachment:
-            part = MIMEBase('application', 'octet-stream')
-            part.set_payload(attachment['data'])
-            encoders.encode_base64(part)
-            part.add_header(
-                'Content-Disposition',
-                f'attachment; filename= {attachment["filename"]}'
-            )
-            msg.attach(part)
-        
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.starttls()
-        server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
-        text = msg.as_string()
-        server.sendmail(EMAIL_FROM, to_email, text)
-        server.quit()
-        
-        # Log successful email
-        log_email_notification(user_id, to_email, email_type, subject, 'sent')
-        
-        logger.info(f"Email sent successfully to {to_email}")
-        return True
-    except Exception as e:
-        # Log failed email
-        log_email_notification(user_id, to_email, email_type, subject, 'failed', str(e))
-        
-        logger.error(f"Error sending email: {e}")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3)
+        result = sock.connect_ex((EMAIL_HOST, EMAIL_PORT))
+        sock.close()
+        return result == 0
+    except Exception:
         return False
 
-def log_email_notification(user_id, email_address, email_type, subject, status, error_message=None):
-    """Log email notification to database"""
+def ensure_mailhog_running():
+    """Ensure MailHog is running, attempt to start it if not"""
+    import subprocess
+    import os
+    import time
+    
+    if check_mailhog_status():
+        logger.info("MailHog is already running")
+        return True
+    
+    logger.warning("MailHog not running, attempting to start...")
+    
     try:
-        conn = get_db()
-        cursor = conn.cursor()
+        # Try to start MailHog directly with free ports
+        mailhog_path = os.path.join(os.getcwd(), 'mailhog')
+        if not os.path.exists(mailhog_path):
+            logger.error(f"MailHog executable not found at: {mailhog_path}")
+            return False
+            
+        logger.info(f"Starting MailHog from: {mailhog_path}")
         
-        cursor.execute('''
-            INSERT INTO email_notifications 
-            (user_id, email_address, email_type, subject, status, error_message)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user_id, email_address, email_type, subject, status, error_message))
+        # Use standard MailHog ports
+        cmd = [
+            mailhog_path,
+            '-smtp-bind-addr', f'127.0.0.1:{EMAIL_PORT}',
+            '-ui-bind-addr', '127.0.0.1:8025',
+            '-api-bind-addr', '127.0.0.1:8025'
+        ]
         
-        conn.commit()
-        conn.close()
+        logger.info(f"MailHog command: {' '.join(cmd)}")
+        
+        # Start the process
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=os.getcwd()
+        )
+        
+        logger.info(f"MailHog process started with PID: {process.pid}")
+        
+        # Wait for MailHog to fully start
+        max_wait = 10  # Maximum 10 seconds
+        for i in range(max_wait):
+            time.sleep(1)
+            if check_mailhog_status():
+                logger.info(f"MailHog started successfully after {i+1} seconds")
+                return True
+            logger.info(f"Waiting for MailHog to start... ({i+1}/{max_wait})")
+        
+        logger.error(f"MailHog failed to start within {max_wait} seconds")
+        return False
+            
     except Exception as e:
-        logger.error(f"Error logging email notification: {e}")
+        logger.error(f"Error starting MailHog: {e}")
+        return False
+
+def send_email(to_email, subject, body, attachment=None, retry_count=3):
+    """
+    Enhanced email sending function with auto-start capability and retry logic
+    """
+    # First, ensure MailHog is running
+    if not ensure_mailhog_running():
+        logger.error("Cannot send email - MailHog is not running and could not be started")
+        return False
+    
+    for attempt in range(retry_count):
+        try:
+            # Double-check connection before attempting to send
+            if not check_mailhog_status():
+                logger.warning(f"MailHog not accessible on attempt {attempt + 1}/{retry_count}")
+                if attempt < retry_count - 1:
+                    # Try to restart MailHog
+                    ensure_mailhog_running()
+                    import time
+                    time.sleep(2)
+                    continue
+                else:
+                    logger.error("MailHog server is not accessible after all attempts")
+                    return False
+            
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = EMAIL_FROM
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            
+            # Add body
+            msg.attach(MIMEText(body, 'html'))
+            
+            # Add attachment if provided
+            if attachment:
+                part = MIMEBase('application', 'octet-stream')
+                part.set_payload(attachment['data'])
+                encoders.encode_base64(part)
+                part.add_header(
+                    'Content-Disposition',
+                    f'attachment; filename= {attachment["filename"]}'
+                )
+                msg.attach(part)
+            
+            # Send email
+            server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
+            server.sendmail(EMAIL_FROM, to_email, msg.as_string())
+            server.quit()
+            
+            logger.info(f"Email sent successfully to {to_email}: {subject}")
+            return True
+            
+        except ConnectionRefusedError as e:
+            logger.warning(f"Connection refused on attempt {attempt + 1}/{retry_count}: {e}")
+            if attempt < retry_count - 1:
+                # Try to restart MailHog on connection failure
+                ensure_mailhog_running()
+                import time
+                time.sleep(3)  # Wait a bit longer after restart
+                continue
+            else:
+                logger.error(f"Failed to send email after {retry_count} attempts - Connection refused")
+                return False
+                
+        except smtplib.SMTPException as e:
+            logger.error(f"SMTP error on attempt {attempt + 1}: {e}")
+            if attempt < retry_count - 1:
+                import time
+                time.sleep(2)
+                continue
+            else:
+                logger.error(f"Failed to send email after {retry_count} attempts - SMTP error")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Unexpected error on attempt {attempt + 1}: {e}")
+            if attempt < retry_count - 1:
+                import time
+                time.sleep(2)
+                continue
+            else:
+                logger.error(f"Failed to send email after {retry_count} attempts - Unexpected error")
+                return False
+    
+    return False
 
 def send_google_chat_message(message):
     """Send message to Google Chat webhook"""
@@ -547,129 +673,6 @@ def send_google_chat_message(message):
 
 # New Celery Tasks
 @celery.task(bind=True)
-def send_welcome_email(self=None, user_id=None, username=None, email=None):
-    """Send welcome email to newly registered user"""
-    # Handle both Celery task call and direct function call
-    if self is not None and hasattr(self, 'request'):
-        # Called as Celery task
-        pass  
-    else:
-        # Called directly - shift parameters
-        if self is not None:
-            user_id, username, email = self, user_id, username
-    
-    try:
-        welcome_html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Welcome to ParkMate</title>
-            <style>
-                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f5f5f5; }}
-                .container {{ max-width: 600px; margin: 0 auto; background-color: white; }}
-                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 20px; text-align: center; }}
-                .header h1 {{ margin: 0; font-size: 28px; font-weight: 300; }}
-                .content {{ padding: 40px 30px; }}
-                .welcome-box {{ background-color: #f8f9ff; border-left: 4px solid #667eea; padding: 20px; margin: 20px 0; }}
-                .feature-list {{ list-style: none; padding: 0; }}
-                .feature-item {{ display: flex; align-items: center; margin: 15px 0; }}
-                .feature-icon {{ width: 24px; height: 24px; background-color: #667eea; border-radius: 50%; margin-right: 15px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; }}
-                .cta-button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; margin: 20px 0; }}
-                .footer {{ background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>🚗 Welcome to ParkMate!</h1>
-                    <p>Your Smart Parking Solution</p>
-                </div>
-                
-                <div class="content">
-                    <div class="welcome-box">
-                        <h2>Hello {username}! 👋</h2>
-                        <p>Welcome to ParkMate - your gateway to hassle-free parking management. We're excited to have you join our community of smart parkers!</p>
-                    </div>
-                    
-                    <h3>🌟 What you can do with ParkMate:</h3>
-                    <ul class="feature-list">
-                        <li class="feature-item">
-                            <div class="feature-icon">🅿️</div>
-                            <div>Find and reserve parking spots instantly</div>
-                        </li>
-                        <li class="feature-item">
-                            <div class="feature-icon">⏰</div>
-                            <div>Get daily reminders for parking bookings</div>
-                        </li>
-                        <li class="feature-item">
-                            <div class="feature-icon">📊</div>
-                            <div>Track your parking history and expenses</div>
-                        </li>
-                        <li class="feature-item">
-                            <div class="feature-icon">💰</div>
-                            <div>Get transparent pricing with no hidden fees</div>
-                        </li>
-                        <li class="feature-item">
-                            <div class="feature-icon">📱</div>
-                            <div>Manage everything from your dashboard</div>
-                        </li>
-                        <li class="feature-item">
-                            <div class="feature-icon">📈</div>
-                            <div>Export your parking data anytime</div>
-                        </li>
-                    </ul>
-                    
-                    <h3>🚀 Getting Started:</h3>
-                    <ol>
-                        <li><strong>Browse Available Lots:</strong> Check out parking lots near your location</li>
-                        <li><strong>Make a Reservation:</strong> Reserve your spot with just one click</li>
-                        <li><strong>Park with Ease:</strong> Arrive at your reserved spot and start parking</li>
-                        <li><strong>Pay Securely:</strong> Automatic billing based on your usage</li>
-                    </ol>
-                    
-                    <div style="text-align: center; margin: 30px 0;">
-                        <a href="http://localhost:3000" class="cta-button">🎯 Start Parking Now</a>
-                    </div>
-                    
-                    <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                        <h4 style="margin-top: 0; color: #856404;">💡 Pro Tip:</h4>
-                        <p style="margin-bottom: 0; color: #856404;">Set up your notification preferences in your dashboard to receive daily parking reminders at your preferred time!</p>
-                    </div>
-                </div>
-                
-                <div class="footer">
-                    <p><strong>Need Help?</strong></p>
-                    <p>Contact our support team at <a href="mailto:support@parkmate.com">support@parkmate.com</a></p>
-                    <p>Thank you for choosing ParkMate - Park Smart, Park Easy! 🚗💨</p>
-                    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                    <p>This email was sent to {email} because you created a ParkMate account.</p>
-                    <p>&copy; 2025 ParkMate. All rights reserved.</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        success = send_email(
-            email,
-            "🎉 Welcome to ParkMate - Your Smart Parking Journey Begins!",
-            welcome_html,
-            user_id=user_id,
-            email_type='welcome'
-        )
-        
-        if success:
-            logger.info(f"Welcome email sent successfully to {email} for user {username}")
-            return f"Welcome email sent to {email}"
-        else:
-            logger.error(f"Failed to send welcome email to {email}")
-            raise Exception("Failed to send welcome email")
-            
-    except Exception as e:
-        logger.error(f"Error sending welcome email to user {user_id}: {e}")
-        raise
-
-@celery.task(bind=True)
 def send_daily_reminders(self):
     """Send daily reminders to users who haven't visited or need to book parking"""
     try:
@@ -677,22 +680,15 @@ def send_daily_reminders(self):
         conn.row_factory = dict_factory
         cursor = conn.cursor()
         
-        # Get current time for reminder scheduling
-        current_time = datetime.now().strftime('%H:%M')
-        
-        # Get all users with reminder preferences who should receive reminders at this time
+        # Get all users with reminder preferences
         cursor.execute('''
             SELECT 
                 u.id, u.username, u.email, u.phone,
-                COALESCE(up.reminder_enabled, 1) as reminder_enabled, 
-                COALESCE(up.notification_method, 'email') as notification_method,
-                COALESCE(up.reminder_time, '18:00') as reminder_time
+                up.reminder_enabled, up.notification_method,
+                up.reminder_time
             FROM users u
             LEFT JOIN user_preferences up ON u.id = up.user_id
-            WHERE u.is_admin = 0 
-            AND u.email IS NOT NULL 
-            AND (up.reminder_enabled = 1 OR up.reminder_enabled IS NULL)
-            AND (ABS(strftime('%H', 'now', 'localtime') - strftime('%H', COALESCE(up.reminder_time, '18:00'))) <= 1)
+            WHERE u.is_admin = 0 AND (up.reminder_enabled = 1 OR up.reminder_enabled IS NULL)
         ''')
         
         users = cursor.fetchall()
@@ -717,104 +713,17 @@ def send_daily_reminders(self):
             
             today_visits = cursor.fetchone()['today_visits']
             
-            # Get available parking lots for suggestions
-            cursor.execute('''
-                SELECT 
-                    pl.prime_location_name,
-                    pl.price,
-                    COUNT(ps.id) as total_spots,
-                    SUM(CASE WHEN ps.status = 'A' THEN 1 ELSE 0 END) as available_spots
-                FROM parking_lots pl
-                LEFT JOIN parking_spots ps ON pl.id = ps.lot_id
-                GROUP BY pl.id
-                HAVING available_spots > 0
-                ORDER BY available_spots DESC
-                LIMIT 3
-            ''')
-            
-            available_lots = cursor.fetchall()
-            
             # Send reminder if user hasn't visited today and has no active reservations
             if today_visits == 0 and active_reservations == 0:
-                
-                # Create HTML email content
-                lots_html = ""
-                if available_lots:
-                    lots_html = "<h3>🅿️ Available Parking Lots:</h3><ul>"
-                    for lot in available_lots:
-                        lots_html += f"<li><strong>{lot['prime_location_name']}</strong> - ${lot['price']}/hour ({lot['available_spots']} spots available)</li>"
-                    lots_html += "</ul>"
-                
-                reminder_html = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Daily Parking Reminder</title>
-                    <style>
-                        body {{ font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f5f5f5; }}
-                        .container {{ max-width: 600px; margin: 0 auto; background-color: white; }}
-                        .header {{ background: linear-gradient(135deg, #4ECDC4 0%, #44A08D 100%); color: white; padding: 30px 20px; text-align: center; }}
-                        .content {{ padding: 30px; }}
-                        .reminder-box {{ background-color: #e8f6f3; border-left: 4px solid #4ECDC4; padding: 20px; margin: 20px 0; }}
-                        .cta-button {{ display: inline-block; background: linear-gradient(135deg, #4ECDC4 0%, #44A08D 100%); color: white; padding: 12px 25px; text-decoration: none; border-radius: 25px; margin: 20px 0; }}
-                        .footer {{ background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 14px; color: #666; }}
-                        .tips {{ background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="header">
-                            <h1>🔔 Daily Parking Reminder</h1>
-                            <p>Don't forget to book your parking spot!</p>
-                        </div>
-                        
-                        <div class="content">
-                            <div class="reminder-box">
-                                <h2>Hi {user['username']}! 👋</h2>
-                                <p>We noticed you haven't booked a parking spot today. If you're planning to drive somewhere, don't forget to secure your parking space!</p>
-                            </div>
-                            
-                            {lots_html}
-                            
-                            <div style="text-align: center;">
-                                <a href="http://localhost:3000/user/parking-lots" class="cta-button">🎯 Book Parking Now</a>
-                            </div>
-                            
-                            <div class="tips">
-                                <h4>💡 Quick Tips:</h4>
-                                <ul>
-                                    <li>Book early to get the best spots</li>
-                                    <li>Check real-time availability</li>
-                                    <li>Set up multiple payment methods for convenience</li>
-                                </ul>
-                            </div>
-                            
-                            <p><strong>Current time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
-                        </div>
-                        
-                        <div class="footer">
-                            <p>You're receiving this reminder because you have notifications enabled.</p>
-                            <p><a href="http://localhost:3000/user/preferences">Manage your notification preferences</a></p>
-                            <p>&copy; 2025 ParkMate. All rights reserved.</p>
-                        </div>
-                    </div>
-                </body>
-                </html>
-                """
+                message = f"Hi {user['username']},\n\nReminder: You haven't booked a parking spot today. If you need parking, please book a spot through our app.\n\nBest regards,\nParking Management System"
                 
                 notification_method = user.get('notification_method', 'email')
                 
                 if notification_method == 'email' and user['email']:
-                    if send_email(user['email'], "🔔 Daily Parking Reminder - ParkMate", reminder_html, user_id=user['id'], email_type='daily_reminder'):
+                    if send_email(user['email'], "Daily Parking Reminder", message):
                         reminders_sent += 1
                 elif notification_method == 'gchat':
-                    # Simplified message for Google Chat
-                    available_lots_text = ""
-                    if available_lots:
-                        available_lots_text = "\n🅿️ Available lots: " + ", ".join([f"{lot['prime_location_name']} (${lot['price']}/hr)" for lot in available_lots[:2]])
-                    
-                    chat_message = f"🔔 Hi {user['username']}! You haven't booked parking today. Need a spot?{available_lots_text}\n📱 Book now: http://localhost:3000"
-                    
+                    chat_message = f"📅 Daily Reminder: {user['username']}, you haven't booked parking today. Book now if needed!"
                     if send_google_chat_message(chat_message):
                         reminders_sent += 1
         
@@ -844,11 +753,10 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
             cursor.execute('SELECT * FROM users WHERE id = ? AND is_admin = 0', (user_id,))
             users = cursor.fetchall()
         else:
-            cursor.execute('SELECT * FROM users WHERE is_admin = 0 AND email IS NOT NULL')
+            cursor.execute('SELECT * FROM users WHERE is_admin = 0')
             users = cursor.fetchall()
         
         reports_generated = 0
-        month_name = datetime(year, month, 1).strftime('%B')
         
         for user in users:
             # Generate monthly statistics
@@ -856,15 +764,12 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
                 SELECT 
                     COUNT(*) as total_bookings,
                     COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_bookings,
-                    COUNT(CASE WHEN status = 'active' THEN 1 END) as active_bookings,
                     COALESCE(SUM(parking_cost), 0) as total_spent,
                     AVG(CASE 
                         WHEN parking_timestamp IS NOT NULL AND leaving_timestamp IS NOT NULL 
                         THEN (julianday(leaving_timestamp) - julianday(parking_timestamp)) * 24 
                         ELSE NULL 
-                    END) as avg_duration_hours,
-                    MIN(DATE(created_at)) as first_booking_date,
-                    MAX(DATE(created_at)) as last_booking_date
+                    END) as avg_duration_hours
                 FROM reservations 
                 WHERE user_id = ? 
                     AND strftime('%Y', created_at) = ? 
@@ -877,9 +782,7 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
             cursor.execute('''
                 SELECT 
                     pl.prime_location_name,
-                    pl.address,
-                    COUNT(*) as usage_count,
-                    SUM(CASE WHEN r.parking_cost IS NOT NULL THEN r.parking_cost ELSE 0 END) as total_spent_here
+                    COUNT(*) as usage_count
                 FROM reservations r
                 JOIN parking_spots ps ON r.spot_id = ps.id
                 JOIN parking_lots pl ON ps.lot_id = pl.id
@@ -897,8 +800,7 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
             cursor.execute('''
                 SELECT 
                     DATE(created_at) as date,
-                    COUNT(*) as bookings,
-                    SUM(CASE WHEN parking_cost IS NOT NULL THEN parking_cost ELSE 0 END) as daily_spent
+                    COUNT(*) as bookings
                 FROM reservations
                 WHERE user_id = ? 
                     AND strftime('%Y', created_at) = ? 
@@ -909,246 +811,63 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
             
             daily_usage = cursor.fetchall()
             
-            # Hourly booking pattern
-            cursor.execute('''
-                SELECT 
-                    strftime('%H', created_at) as hour,
-                    COUNT(*) as bookings
-                FROM reservations
-                WHERE user_id = ? 
-                    AND strftime('%Y', created_at) = ? 
-                    AND strftime('%m', created_at) = ?
-                GROUP BY strftime('%H', created_at)
-                ORDER BY bookings DESC
-                LIMIT 3
-            ''', (user['id'], str(year), str(month).zfill(2)))
-            
-            peak_hours = cursor.fetchall()
-            
-            # Comparison with previous month
-            prev_month = month - 1 if month > 1 else 12
-            prev_year = year if month > 1 else year - 1
-            
-            cursor.execute('''
-                SELECT 
-                    COUNT(*) as prev_bookings,
-                    COALESCE(SUM(parking_cost), 0) as prev_spent
-                FROM reservations
-                WHERE user_id = ? 
-                    AND strftime('%Y', created_at) = ? 
-                    AND strftime('%m', created_at) = ?
-            ''', (user['id'], str(prev_year), str(prev_month).zfill(2)))
-            
-            prev_stats = cursor.fetchone()
-            
-            # Calculate trends
-            booking_trend = ""
-            spending_trend = ""
-            
-            if prev_stats['prev_bookings'] > 0:
-                booking_change = ((monthly_stats['total_bookings'] - prev_stats['prev_bookings']) / prev_stats['prev_bookings']) * 100
-                if booking_change > 0:
-                    booking_trend = f"📈 {booking_change:.1f}% increase from last month"
-                elif booking_change < 0:
-                    booking_trend = f"📉 {abs(booking_change):.1f}% decrease from last month"
-                else:
-                    booking_trend = "➡️ Same as last month"
-            else:
-                booking_trend = "🆕 Your first month with bookings!"
-                
-            if prev_stats['prev_spent'] > 0:
-                spending_change = ((monthly_stats['total_spent'] - prev_stats['prev_spent']) / prev_stats['prev_spent']) * 100
-                if spending_change > 0:
-                    spending_trend = f"📈 {spending_change:.1f}% increase from last month"
-                elif spending_change < 0:
-                    spending_trend = f"📉 {abs(spending_change):.1f}% decrease from last month"
-                else:
-                    spending_trend = "➡️ Same as last month"
-            else:
-                spending_trend = "🆕 Your first month with expenses!"
-            
-            # Generate daily usage table
-            daily_table_rows = ""
-            if daily_usage:
-                for day in daily_usage[:10]:  # Show first 10 days
-                    daily_table_rows += f"<tr><td>{day['date']}</td><td>{day['bookings']}</td><td>${day['daily_spent']:.2f}</td></tr>"
-            else:
-                daily_table_rows = "<tr><td colspan='3'>No bookings this month</td></tr>"
-            
-            peak_hours_text = ""
-            if peak_hours:
-                peak_hours_text = ", ".join([f"{hour['hour']}:00 ({hour['bookings']} bookings)" for hour in peak_hours])
-            else:
-                peak_hours_text = "No data available"
-            
-            # Generate personalized recommendations
-            recommendations = []
-            if monthly_stats['total_bookings'] > 0:
-                avg_cost_per_booking = monthly_stats['total_spent'] / monthly_stats['total_bookings']
-                if avg_cost_per_booking > 10:
-                    recommendations.append("💡 Consider booking for longer durations to get better hourly rates")
-                if monthly_stats['avg_duration_hours'] and monthly_stats['avg_duration_hours'] < 2:
-                    recommendations.append("⏰ You tend to park for short periods - perfect for quick errands!")
-                if len(daily_usage) > 15:
-                    recommendations.append("🌟 You're a regular user! Consider looking into monthly parking passes")
-            else:
-                recommendations.append("🚗 Start using ParkMate to track your parking habits and save money!")
-            
-            recommendations.append("📱 Enable push notifications for real-time parking updates")
-            recommendations.append("🎯 Book in advance during peak hours for guaranteed spots")
-            
-            recommendations_html = ""
-            for rec in recommendations:
-                recommendations_html += f"<li>{rec}</li>"
-            
             # Generate HTML report
             html_report = f"""
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Monthly Parking Activity Report - {month_name} {year}</title>
+                <title>Monthly Parking Activity Report</title>
                 <style>
-                    body {{ 
-                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-                        margin: 0; padding: 0; background-color: #f5f7fa; 
-                        line-height: 1.6; color: #333;
-                    }}
-                    .container {{ max-width: 800px; margin: 0 auto; background-color: white; box-shadow: 0 0 20px rgba(0,0,0,0.1); }}
-                    .header {{ 
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                        color: white; padding: 40px 30px; text-align: center; 
-                    }}
-                    .header h1 {{ margin: 0; font-size: 32px; font-weight: 300; }}
-                    .header p {{ margin: 10px 0 0 0; opacity: 0.9; font-size: 18px; }}
-                    .content {{ padding: 40px 30px; }}
-                    .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 30px 0; }}
-                    .stat-card {{ 
-                        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
-                        color: white; padding: 25px; border-radius: 15px; text-align: center; 
-                        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
-                    }}
-                    .stat-card h3 {{ margin: 0 0 10px 0; font-size: 24px; }}
-                    .stat-card p {{ margin: 0; font-size: 16px; opacity: 0.9; }}
-                    .section {{ 
-                        background-color: #f8f9ff; border-left: 4px solid #667eea; 
-                        padding: 25px; margin: 25px 0; border-radius: 0 10px 10px 0; 
-                    }}
-                    .trend {{ 
-                        background-color: #e8f6f3; border: 1px solid #4ECDC4; 
-                        padding: 20px; border-radius: 10px; margin: 20px 0; 
-                    }}
-                    .table {{ 
-                        width: 100%; border-collapse: collapse; margin: 20px 0; 
-                        background-color: white; border-radius: 10px; overflow: hidden;
-                        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                    }}
-                    .table th, .table td {{ 
-                        border: none; padding: 15px; text-align: left; 
-                        border-bottom: 1px solid #f0f0f0;
-                    }}
-                    .table th {{ 
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                        color: white; font-weight: 500;
-                    }}
-                    .table tr:hover {{ background-color: #f8f9ff; }}
-                    .recommendations {{ 
-                        background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%); 
-                        padding: 25px; border-radius: 15px; margin: 25px 0; 
-                    }}
-                    .recommendations h3 {{ margin-top: 0; color: #2d3436; }}
-                    .recommendations ul {{ padding-left: 20px; }}
-                    .recommendations li {{ margin: 10px 0; color: #2d3436; }}
-                    .footer {{ 
-                        background-color: #2d3436; color: white; padding: 30px; 
-                        text-align: center; font-size: 14px; 
-                    }}
-                    .highlight {{ background-color: #fff3cd; padding: 10px; border-radius: 5px; margin: 10px 0; }}
-                    .no-data {{ text-align: center; color: #666; font-style: italic; padding: 20px; }}
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    .header {{ background-color: #f0f0f0; padding: 20px; border-radius: 5px; }}
+                    .stat-box {{ background-color: #e8f4f8; padding: 15px; margin: 10px 0; border-radius: 5px; }}
+                    .table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+                    .table th, .table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                    .table th {{ background-color: #f2f2f2; }}
                 </style>
             </head>
             <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>📊 Monthly Parking Report</h1>
-                        <p><strong>{month_name} {year}</strong> Activity Summary for <strong>{user['username']}</strong></p>
-                        <p>Generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
-                    </div>
-                    
-                    <div class="content">
-                        <div class="summary-grid">
-                            <div class="stat-card">
-                                <h3>{monthly_stats['total_bookings']}</h3>
-                                <p>Total Bookings</p>
-                            </div>
-                            <div class="stat-card">
-                                <h3>{monthly_stats['completed_bookings']}</h3>
-                                <p>Completed</p>
-                            </div>
-                            <div class="stat-card">
-                                <h3>${monthly_stats['total_spent']:.2f}</h3>
-                                <p>Total Spent</p>
-                            </div>
-                            <div class="stat-card">
-                                <h3>{monthly_stats['avg_duration_hours']:.1f}h</h3>
-                                <p>Avg Duration</p>
-                            </div>
-                        </div>
-                        
-                        <div class="trend">
-                            <h3>📈 Monthly Trends</h3>
-                            <div class="highlight">
-                                <strong>Bookings:</strong> {booking_trend}<br>
-                                <strong>Spending:</strong> {spending_trend}
-                            </div>
-                        </div>
-                        
-                        <div class="section">
-                            <h2>🏆 Most Used Parking Lot</h2>
-                            {f"<p><strong>{most_used_lot['prime_location_name']}</strong></p><p>📍 {most_used_lot['address']}</p><p>🎯 Used {most_used_lot['usage_count']} times</p><p>💰 Spent ${most_used_lot['total_spent_here']:.2f}</p>" if most_used_lot else '<p class="no-data">No parking lot usage this month</p>'}
-                        </div>
-                        
-                        <div class="section">
-                            <h2>⏰ Peak Usage Hours</h2>
-                            <p><strong>Your favorite booking times:</strong> {peak_hours_text}</p>
-                        </div>
-                        
-                        <div class="section">
-                            <h2>📅 Daily Activity Summary</h2>
-                            <table class="table">
-                                <thead>
-                                    <tr><th>Date</th><th>Bookings</th><th>Daily Spent</th></tr>
-                                </thead>
-                                <tbody>
-                                    {daily_table_rows}
-                                </tbody>
-                            </table>
-                        </div>
-                        
-                        <div class="recommendations">
-                            <h3>🎯 Personalized Recommendations</h3>
-                            <ul>
-                                {recommendations_html}
-                            </ul>
-                        </div>
-                        
-                        <div class="section">
-                            <h2>📈 Quick Stats</h2>
-                            <ul>
-                                <li><strong>Most active day:</strong> {daily_usage[0]['date'] if daily_usage else 'N/A'}</li>
-                                <li><strong>Average cost per booking:</strong> ${(monthly_stats['total_spent'] / monthly_stats['total_bookings']):.2f if monthly_stats['total_bookings'] > 0 else 0:.2f}</li>
-                                <li><strong>Success rate:</strong> {(monthly_stats['completed_bookings'] / monthly_stats['total_bookings'] * 100):.1f if monthly_stats['total_bookings'] > 0 else 0:.1f}%</li>
-                                <li><strong>Days with parking:</strong> {len(daily_usage)} out of {31 if month in [1,3,5,7,8,10,12] else 30 if month != 2 else 28} days</li>
-                            </ul>
-                        </div>
-                    </div>
-                    
-                    <div class="footer">
-                        <p><strong>🚗 Thank you for choosing ParkMate!</strong></p>
-                        <p>Keep parking smart and save money with our intelligent parking solutions.</p>
-                        <p>Questions? Contact us at <a href="mailto:support@parkmate.com" style="color: #4ECDC4;">support@parkmate.com</a></p>
-                        <hr style="border: none; border-top: 1px solid #555; margin: 20px 0;">
-                        <p>&copy; 2025 ParkMate. All rights reserved.</p>
-                    </div>
+                <div class="header">
+                    <h1>Monthly Parking Activity Report</h1>
+                    <p><strong>User:</strong> {user['username']}</p>
+                    <p><strong>Period:</strong> {month}/{year}</p>
+                    <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                </div>
+                
+                <div class="stat-box">
+                    <h2>Monthly Summary</h2>
+                    <p><strong>Total Bookings:</strong> {monthly_stats['total_bookings']}</p>
+                    <p><strong>Completed Bookings:</strong> {monthly_stats['completed_bookings']}</p>
+                    <p><strong>Total Amount Spent:</strong> ${monthly_stats['total_spent']:.2f}</p>
+                    <p><strong>Average Parking Duration:</strong> {monthly_stats['avg_duration_hours']:.2f} hours</p>
+                </div>
+                
+                <div class="stat-box">
+                    <h2>Most Used Parking Lot</h2>
+                    <p>{most_used_lot['prime_location_name'] if most_used_lot else 'No parking lot usage this month'}</p>
+                    <p>Usage Count: {most_used_lot['usage_count'] if most_used_lot else 0}</p>
+                </div>
+                
+                <div class="stat-box">
+                    <h2>Daily Usage Pattern</h2>
+                    <table class="table">
+                        <tr><th>Date</th><th>Bookings</th></tr>
+            """
+            
+            for day in daily_usage:
+                html_report += f"<tr><td>{day['date']}</td><td>{day['bookings']}</td></tr>"
+            
+            html_report += """
+                    </table>
+                </div>
+                
+                <div class="stat-box">
+                    <h2>Tips for Next Month</h2>
+                    <ul>
+                        <li>Book parking spots in advance to ensure availability</li>
+                        <li>Consider off-peak hours for better rates</li>
+                        <li>Check for monthly parking passes for regular users</li>
+                    </ul>
                 </div>
             </body>
             </html>
@@ -1158,16 +877,14 @@ def generate_monthly_activity_report(self, user_id=None, month=None, year=None):
             if user['email']:
                 if send_email(
                     user['email'], 
-                    f"📊 Your ParkMate Monthly Report - {month_name} {year}",
-                    html_report,
-                    user_id=user['id'],
-                    email_type='monthly_report'
+                    f"Monthly Parking Report - {month}/{year}",
+                    html_report
                 ):
                     reports_generated += 1
         
         conn.close()
-        logger.info(f"Generated {reports_generated} monthly reports for {month_name} {year}")
-        return f"Generated {reports_generated} monthly reports for {month_name} {year}"
+        logger.info(f"Generated {reports_generated} monthly reports")
+        return f"Generated {reports_generated} monthly reports for {month}/{year}"
         
     except Exception as e:
         logger.error(f"Error generating monthly reports: {e}")
@@ -1267,148 +984,27 @@ def export_user_parking_data_csv(self, user_id):
             }
             
             email_body = f"""
-            <!DOCTYPE html>
             <html>
-            <head>
-                <title>Your Parking Data Export is Ready</title>
-                <style>
-                    body {{ 
-                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-                        margin: 0; padding: 0; background-color: #f5f7fa; 
-                    }}
-                    .container {{ max-width: 600px; margin: 0 auto; background-color: white; }}
-                    .header {{ 
-                        background: linear-gradient(135deg, #4ECDC4 0%, #44A08D 100%); 
-                        color: white; padding: 40px 20px; text-align: center; 
-                    }}
-                    .header h1 {{ margin: 0; font-size: 28px; font-weight: 300; }}
-                    .content {{ padding: 40px 30px; }}
-                    .export-box {{ 
-                        background-color: #e8f6f3; border-left: 4px solid #4ECDC4; 
-                        padding: 25px; margin: 25px 0; border-radius: 0 10px 10px 0; 
-                    }}
-                    .stats-grid {{ 
-                        display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); 
-                        gap: 20px; margin: 25px 0; 
-                    }}
-                    .stat-item {{ 
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                        color: white; padding: 20px; border-radius: 10px; text-align: center; 
-                    }}
-                    .stat-item h3 {{ margin: 0 0 5px 0; font-size: 24px; }}
-                    .stat-item p {{ margin: 0; font-size: 14px; opacity: 0.9; }}
-                    .feature-list {{ list-style: none; padding: 0; }}
-                    .feature-item {{ 
-                        display: flex; align-items: center; margin: 15px 0; 
-                        padding: 15px; background-color: #f8f9ff; border-radius: 8px; 
-                    }}
-                    .feature-icon {{ 
-                        width: 40px; height: 40px; background-color: #4ECDC4; 
-                        border-radius: 50%; margin-right: 15px; display: flex; 
-                        align-items: center; justify-content: center; color: white; font-size: 18px; 
-                    }}
-                    .cta-note {{ 
-                        background-color: #fff3cd; border: 1px solid #ffeaa7; 
-                        padding: 20px; border-radius: 10px; margin: 25px 0; 
-                    }}
-                    .footer {{ 
-                        background-color: #2d3436; color: white; padding: 30px; 
-                        text-align: center; font-size: 14px; 
-                    }}
-                </style>
-            </head>
             <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>📄 Export Complete!</h1>
-                        <p>Your parking data is ready to download</p>
-                    </div>
-                    
-                    <div class="content">
-                        <div class="export-box">
-                            <h2>Hello {user['username']}! 👋</h2>
-                            <p>Great news! Your parking data export has been completed successfully. The attached CSV file contains all your parking history and is ready for your use.</p>
-                        </div>
-                        
-                        <div class="stats-grid">
-                            <div class="stat-item">
-                                <h3>{len(parking_data)}</h3>
-                                <p>Total Records</p>
-                            </div>
-                            <div class="stat-item">
-                                <h3>{datetime.now().strftime('%b %Y')}</h3>
-                                <p>Export Date</p>
-                            </div>
-                        </div>
-                        
-                        <h3>📊 What's included in your export:</h3>
-                        <ul class="feature-list">
-                            <li class="feature-item">
-                                <div class="feature-icon">🎫</div>
-                                <div>
-                                    <strong>Reservation Details</strong><br>
-                                    <small>All your booking records with unique IDs</small>
-                                </div>
-                            </li>
-                            <li class="feature-item">
-                                <div class="feature-icon">📍</div>
-                                <div>
-                                    <strong>Location Information</strong><br>
-                                    <small>Parking lot names, addresses, and spot numbers</small>
-                                </div>
-                            </li>
-                            <li class="feature-item">
-                                <div class="feature-icon">⏰</div>
-                                <div>
-                                    <strong>Time Tracking</strong><br>
-                                    <small>Booking, parking, and departure timestamps</small>
-                                </div>
-                            </li>
-                            <li class="feature-item">
-                                <div class="feature-icon">💰</div>
-                                <div>
-                                    <strong>Financial Data</strong><br>
-                                    <small>Parking costs and duration calculations</small>
-                                </div>
-                            </li>
-                            <li class="feature-item">
-                                <div class="feature-icon">📈</div>
-                                <div>
-                                    <strong>Status & Analytics</strong><br>
-                                    <small>Reservation status and usage patterns</small>
-                                </div>
-                            </li>
-                        </ul>
-                        
-                        <div class="cta-note">
-                            <h4>💡 Pro Tips for Using Your Data:</h4>
-                            <ul>
-                                <li>🔢 <strong>Excel/Sheets:</strong> Open the CSV in Excel or Google Sheets for easy analysis</li>
-                                <li>📊 <strong>Charts:</strong> Create graphs to visualize your parking patterns</li>
-                                <li>💡 <strong>Insights:</strong> Track your spending trends and optimize parking habits</li>
-                                <li>🗂️ <strong>Records:</strong> Keep for expense reporting or personal budgeting</li>
-                            </ul>
-                        </div>
-                        
-                        <p><strong>📅 Export generated on:</strong> {datetime.now().strftime('%A, %B %d, %Y at %I:%M %p')}</p>
-                        <p><strong>📎 File format:</strong> CSV (Comma Separated Values)</p>
-                        <p><strong>🔒 Data privacy:</strong> This export contains your personal parking data. Please handle securely.</p>
-                    </div>
-                    
-                    <div class="footer">
-                        <p><strong>📧 Need Help with Your Export?</strong></p>
-                        <p>If you have any questions about your data export, contact our support team:</p>
-                        <p><a href="mailto:support@parkmate.com" style="color: #4ECDC4;">support@parkmate.com</a></p>
-                        <hr style="border: none; border-top: 1px solid #555; margin: 20px 0;">
-                        <p><strong>🚗 Thank you for using ParkMate!</strong></p>
-                        <p>&copy; 2025 ParkMate. All rights reserved.</p>
-                    </div>
-                </div>
+                <h2>Your Parking Data Export is Ready!</h2>
+                <p>Dear {user['username']},</p>
+                <p>Your parking data export has been completed successfully.</p>
+                <p>The attached CSV file contains:</p>
+                <ul>
+                    <li>All your parking reservations</li>
+                    <li>Booking timestamps</li>
+                    <li>Parking duration and costs</li>
+                    <li>Location details</li>
+                </ul>
+                <p>Total records: {len(parking_data)}</p>
+                <p>Export generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <br>
+                <p>Best regards,<br>Parking Management System</p>
             </body>
             </html>
             """
             
-            send_email(user_email, "📄 Your Parking Data Export is Ready!", email_body, attachment, user_id=user_id, email_type='csv_export')
+            send_email(user_email, "Your Parking Data Export", email_body, attachment)
         
         conn.close()
         logger.info(f"CSV export completed for user {user_id}: {filename}")
@@ -1467,22 +1063,45 @@ def register():
         conn.commit()
         conn.close()
         
+        # Send welcome email to the new user
+        welcome_email_body = f"""
+        <html>
+        <body>
+            <h2>Welcome to ParkMate! 🚗</h2>
+            <p>Dear {username},</p>
+            <p>Thank you for registering with ParkMate! Your account has been successfully created.</p>
+            
+            <div style="background-color: #f0f8ff; padding: 20px; border-radius: 5px; margin: 20px 0;">
+                <h3>Account Details:</h3>
+                <p><strong>Username:</strong> {username}</p>
+                <p><strong>Email:</strong> {email}</p>
+                <p><strong>Phone:</strong> {phone}</p>
+                <p><strong>Registration Date:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            </div>
+            
+            <h3>What's Next?</h3>
+            <ul>
+                <li>🚗 Browse available parking lots</li>
+                <li>📅 Make your first parking reservation</li>
+                <li>💰 View pricing and payment options</li>
+                <li>📊 Track your parking history</li>
+            </ul>
+            
+            <p>If you need any assistance, feel free to contact our support team.</p>
+            
+            <p>Happy Parking!<br>
+            <strong>The ParkMate Team</strong></p>
+        </body>
+        </html>
+        """
+        
+        # Send welcome email
+        if email:
+            send_email(email, "Welcome to ParkMate! 🚗", welcome_email_body)
+        
         # Invalidate user-related caches and analytics
         invalidate_cache_pattern('*users*')
         invalidate_cache_pattern('*admin*')
-        
-        # Send welcome email asynchronously
-        try:
-            send_welcome_email.delay(user_id, username, email)
-            logger.info(f"Welcome email task queued for user {username}")
-        except Exception as e:
-            logger.warning(f"Failed to queue welcome email task for user {username}: {e}")
-            # Send email synchronously as fallback
-            try:
-                send_welcome_email(user_id, username, email)
-                logger.info(f"Welcome email sent synchronously for user {username}")
-            except Exception as sync_error:
-                logger.error(f"Failed to send welcome email for user {username}: {sync_error}")
         
         return jsonify({
             'message': 'User registered successfully',
@@ -1592,7 +1211,85 @@ def admin_parking_lots():
                 ''', (lot_id, spot_num))
             
             conn.commit()
+            
+            # Get admin details for email notification
+            cursor.execute('SELECT username, email FROM users WHERE id = ? AND is_admin = 1', (session['user_id'],))
+            admin_details = cursor.fetchone()
+            
             conn.close()
+            
+            # Send parking lot creation notification to admin
+            if admin_details and admin_details['email']:
+                lot_creation_email = f"""
+                <html>
+                <body>
+                    <h2>New Parking Lot Created Successfully! 🅿️</h2>
+                    <p>Dear {admin_details['username']},</p>
+                    <p>A new parking lot has been successfully added to the ParkMate system.</p>
+                    
+                    <div style="background-color: #e8f5e8; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #4CAF50;">
+                        <h3>Parking Lot Details:</h3>
+                        <p><strong>Lot ID:</strong> #{lot_id}</p>
+                        <p><strong>Name:</strong> {location_name}</p>
+                        <p><strong>Address:</strong> {address}</p>
+                        <p><strong>PIN Code:</strong> {pin_code}</p>
+                        <p><strong>Price:</strong> ${price}/hour</p>
+                        <p><strong>Total Spots:</strong> {max_spots}</p>
+                        <p><strong>Created At:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                        <p><strong>Status:</strong> All spots available</p>
+                    </div>
+                    
+                    <div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <h3>System Updates:</h3>
+                        <ul>
+                            <li>✅ {max_spots} parking spots have been automatically created</li>
+                            <li>🔄 All spots are marked as available</li>
+                            <li>📊 The new lot is now visible to users</li>
+                            <li>📈 Analytics data has been updated</li>
+                        </ul>
+                    </div>
+                    
+                    <p>The parking lot is now live and ready for reservations!</p>
+                    
+                    <p>Best regards,<br>
+                    <strong>ParkMate System</strong></p>
+                </body>
+                </html>
+                """
+                
+                send_email(admin_details['email'], f"New Parking Lot Created - {location_name}", lot_creation_email)
+            
+            # Send notification to all users about new parking lot
+            cursor = get_db().cursor()
+            cursor.execute('SELECT email, username FROM users WHERE is_admin = 0 AND email IS NOT NULL')
+            users = cursor.fetchall()
+            cursor.connection.close()
+            
+            for user in users:
+                new_lot_notification = f"""
+                <html>
+                <body>
+                    <h2>New Parking Location Available! 🆕</h2>
+                    <p>Dear {user[1]},</p>
+                    <p>Great news! A new parking location has been added to ParkMate.</p>
+                    
+                    <div style="background-color: #cce5ff; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #007bff;">
+                        <h3>New Location:</h3>
+                        <p><strong>📍 {location_name}</strong></p>
+                        <p><strong>Address:</strong> {address}</p>
+                        <p><strong>Price:</strong> ${price}/hour</p>
+                        <p><strong>Available Spots:</strong> {max_spots}</p>
+                    </div>
+                    
+                    <p>🚗 Ready to book? Log in to your ParkMate account and reserve your spot now!</p>
+                    
+                    <p>Happy Parking!<br>
+                    <strong>The ParkMate Team</strong></p>
+                </body>
+                </html>
+                """
+                
+                send_email(user[0], f"New Parking Location: {location_name}", new_lot_notification)
             
             # Invalidate related caches and analytics
             invalidate_cache_pattern('*parking_lots*')
@@ -1919,24 +1616,38 @@ def delete_user(user_id):
         if user[2]:  # is_admin check
             return jsonify({'error': 'Cannot delete admin users'}), 400
         
-        # First, delete all reservations for this user
+        # First, get all spots that will be freed by this user's active reservations
+        cursor.execute('''
+            SELECT spot_id FROM reservations 
+            WHERE user_id = ? AND status = 'active'
+        ''', (user_id,))
+        spots_to_free = [row[0] for row in cursor.fetchall()]
+        
+        # Delete all reservations for this user
         cursor.execute('DELETE FROM reservations WHERE user_id = ?', (user_id,))
         
-        # Then delete the user
+        # Free up spots that were reserved by this user
+        if spots_to_free:
+            cursor.executemany(
+                'UPDATE parking_spots SET status = "A" WHERE id = ?',
+                [(spot_id,) for spot_id in spots_to_free]
+            )
+        
+        # Delete the user
         cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
         
         conn.commit()
         conn.close()
         
-        # Clear cache to ensure updated data
-        try:
-            redis_client.delete('admin:users')
-            redis_client.delete('admin:analytics')
-        except:
-            pass  # Cache clearing is optional
+        # Ensure database consistency and clear all relevant caches
+        ensure_database_consistency()
+        robust_cache_invalidation()
         
-        logger.info(f"Admin deleted user: {user[1]} (ID: {user_id})")
-        return jsonify({'message': 'User deleted successfully'}), 200
+        logger.info(f"Admin deleted user: {user[1]} (ID: {user_id}), freed {len(spots_to_free)} spots")
+        return jsonify({
+            'message': 'User deleted successfully',
+            'freed_spots': len(spots_to_free)
+        }), 200
         
     except Exception as e:
         logger.error(f"Error deleting user: {e}")
@@ -2764,248 +2475,6 @@ def user_preferences():
             conn.close()
             return jsonify({'error': str(e)}), 500
 
-# Email Management APIs
-@app.route('/api/admin/emails/notifications', methods=['GET'])
-def get_email_notifications():
-    """Get email notification history for admin"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
-    
-    try:
-        conn = get_db()
-        conn.row_factory = dict_factory
-        cursor = conn.cursor()
-        
-        # Get pagination parameters
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 50, type=int)
-        email_type = request.args.get('type', '')
-        status = request.args.get('status', '')
-        
-        # Build query with filters
-        where_conditions = []
-        params = []
-        
-        if email_type:
-            where_conditions.append("email_type = ?")
-            params.append(email_type)
-            
-        if status:
-            where_conditions.append("status = ?")
-            params.append(status)
-        
-        where_clause = ""
-        if where_conditions:
-            where_clause = "WHERE " + " AND ".join(where_conditions)
-        
-        # Get total count
-        cursor.execute(f'''
-            SELECT COUNT(*) as total
-            FROM email_notifications en
-            LEFT JOIN users u ON en.user_id = u.id
-            {where_clause}
-        ''', params)
-        total = cursor.fetchone()['total']
-        
-        # Get paginated results
-        offset = (page - 1) * per_page
-        params.extend([per_page, offset])
-        
-        cursor.execute(f'''
-            SELECT 
-                en.*,
-                u.username,
-                u.email as user_email
-            FROM email_notifications en
-            LEFT JOIN users u ON en.user_id = u.id
-            {where_clause}
-            ORDER BY en.sent_at DESC
-            LIMIT ? OFFSET ?
-        ''', params)
-        
-        notifications = cursor.fetchall()
-        conn.close()
-        
-        return jsonify({
-            'notifications': notifications,
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total': total,
-                'pages': (total + per_page - 1) // per_page
-            }
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/admin/emails/stats', methods=['GET'])
-def get_email_stats():
-    """Get email statistics for admin dashboard"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
-    
-    try:
-        conn = get_db()
-        conn.row_factory = dict_factory
-        cursor = conn.cursor()
-        
-        # Get email stats by type
-        cursor.execute('''
-            SELECT 
-                email_type,
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
-            FROM email_notifications
-            WHERE sent_at >= date('now', '-30 days')
-            GROUP BY email_type
-            ORDER BY total DESC
-        ''')
-        
-        email_stats = cursor.fetchall()
-        
-        # Get daily email counts for the last 7 days
-        cursor.execute('''
-            SELECT 
-                DATE(sent_at) as date,
-                COUNT(*) as count,
-                email_type
-            FROM email_notifications
-            WHERE sent_at >= date('now', '-7 days')
-            GROUP BY DATE(sent_at), email_type
-            ORDER BY date DESC
-        ''')
-        
-        daily_stats = cursor.fetchall()
-        
-        # Get overall stats
-        cursor.execute('''
-            SELECT 
-                COUNT(*) as total_emails,
-                SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as total_sent,
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as total_failed,
-                COUNT(DISTINCT user_id) as unique_recipients
-            FROM email_notifications
-            WHERE sent_at >= date('now', '-30 days')
-        ''')
-        
-        overall_stats = cursor.fetchone()
-        
-        conn.close()
-        
-        return jsonify({
-            'email_stats': email_stats,
-            'daily_stats': daily_stats,
-            'overall_stats': overall_stats
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/user/emails/history', methods=['GET'])
-def get_user_email_history():
-    """Get email history for current user"""
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
-    
-    try:
-        conn = get_db()
-        conn.row_factory = dict_factory
-        cursor = conn.cursor()
-        
-        user_id = session['user_id']
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 20, type=int)
-        
-        # Get total count
-        cursor.execute('''
-            SELECT COUNT(*) as total
-            FROM email_notifications
-            WHERE user_id = ?
-        ''', (user_id,))
-        total = cursor.fetchone()['total']
-        
-        # Get paginated results
-        offset = (page - 1) * per_page
-        cursor.execute('''
-            SELECT 
-                email_type,
-                subject,
-                sent_at,
-                status
-            FROM email_notifications
-            WHERE user_id = ?
-            ORDER BY sent_at DESC
-            LIMIT ? OFFSET ?
-        ''', (user_id, per_page, offset))
-        
-        emails = cursor.fetchall()
-        conn.close()
-        
-        return jsonify({
-            'emails': emails,
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total': total,
-                'pages': (total + per_page - 1) // per_page
-            }
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/admin/emails/test', methods=['POST'])
-def test_email_configuration():
-    """Test email configuration by sending a test email"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
-    
-    try:
-        data = request.json if request.json else {}
-        test_email = data.get('email', 'admin@parkinglot.com')
-        
-        test_html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Email Configuration Test</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                .header {{ background-color: #4ECDC4; color: white; padding: 20px; text-align: center; }}
-                .content {{ padding: 20px; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>🧪 Email Configuration Test</h1>
-            </div>
-            <div class="content">
-                <p>This is a test email to verify that your ParkMate email configuration is working correctly.</p>
-                <p><strong>Timestamp:</strong> {}</p>
-                <p><strong>Status:</strong> ✅ Email service is operational</p>
-                <p>If you received this email, your email configuration is working properly!</p>
-            </div>
-        </body>
-        </html>
-        """.format(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-        
-        success = send_email(
-            test_email,
-            "🧪 ParkMate Email Configuration Test",
-            test_html,
-            email_type='test'
-        )
-        
-        if success:
-            return jsonify({'message': f'Test email sent successfully to {test_email}'}), 200
-        else:
-            return jsonify({'error': 'Failed to send test email'}), 500
-            
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/user/export-csv', methods=['POST'])
 def request_csv_export():
     if not session.get('user_id') or session.get('is_admin'):
@@ -3156,69 +2625,128 @@ def user_reserve_spot():
         conn.row_factory = dict_factory
         cursor = conn.cursor()
         
-        # Check if user already has an active reservation
-        cursor.execute('''
-            SELECT r.id FROM reservations r
-            JOIN parking_spots ps ON r.spot_id = ps.id
-            WHERE r.user_id = ? AND r.status = 'active'
-        ''', (session['user_id'],))
+        # Use transaction to prevent race conditions
+        cursor.execute('BEGIN IMMEDIATE')
         
-        if cursor.fetchone():
+        try:
+            # Check if user already has an active reservation
+            cursor.execute('''
+                SELECT r.id FROM reservations r
+                JOIN parking_spots ps ON r.spot_id = ps.id
+                WHERE r.user_id = ? AND r.status = 'active'
+            ''', (session['user_id'],))
+            
+            if cursor.fetchone():
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'You already have an active reservation'}), 400
+            
+            # Find first available spot in the lot (with row lock)
+            cursor.execute('''
+                SELECT id FROM parking_spots 
+                WHERE lot_id = ? AND status = 'A' 
+                ORDER BY spot_number LIMIT 1
+            ''', (lot_id,))
+            
+            spot = cursor.fetchone()
+            if not spot:
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'No available spots in this parking lot'}), 400
+            
+            # Create reservation
+            cursor.execute('''
+                INSERT INTO reservations (spot_id, user_id, status)
+                VALUES (?, ?, 'active')
+            ''', (spot['id'], session['user_id']))
+            
+            reservation_id = cursor.lastrowid
+            
+            # Update spot status to occupied
+            cursor.execute('UPDATE parking_spots SET status = "O" WHERE id = ?', (spot['id'],))
+            
+            # Commit the transaction
+            cursor.execute('COMMIT')
+            
+            # Get reservation details
+            cursor.execute('''
+                SELECT 
+                    r.*,
+                    ps.spot_number,
+                    pl.prime_location_name,
+                    pl.address,
+                    pl.price
+                FROM reservations r
+                JOIN parking_spots ps ON r.spot_id = ps.id
+                JOIN parking_lots pl ON ps.lot_id = pl.id
+                WHERE r.id = ?
+            ''', (reservation_id,))
+            
+            reservation = cursor.fetchone()
+            
+            # Get user details for email notification
+            cursor.execute('SELECT username, email FROM users WHERE id = ?', (session['user_id'],))
+            user_details = cursor.fetchone()
+            
             conn.close()
-            return jsonify({'error': 'You already have an active reservation'}), 400
-        
-        # Find first available spot in the lot
-        cursor.execute('''
-            SELECT id FROM parking_spots 
-            WHERE lot_id = ? AND status = 'A' 
-            ORDER BY spot_number LIMIT 1
-        ''', (lot_id,))
-        
-        spot = cursor.fetchone()
-        if not spot:
-            conn.close()
-            return jsonify({'error': 'No available spots in this parking lot'}), 400
-        
-        # Create reservation
-        cursor.execute('''
-            INSERT INTO reservations (spot_id, user_id, status)
-            VALUES (?, ?, 'active')
-        ''', (spot['id'], session['user_id']))
-        
-        reservation_id = cursor.lastrowid
-        
-        # Update spot status to occupied
-        cursor.execute('UPDATE parking_spots SET status = "O" WHERE id = ?', (spot['id'],))
-        
-        conn.commit()
-        
-        # Get reservation details
-        cursor.execute('''
-            SELECT 
-                r.*,
-                ps.spot_number,
-                pl.prime_location_name,
-                pl.address,
-                pl.price
-            FROM reservations r
-            JOIN parking_spots ps ON r.spot_id = ps.id
-            JOIN parking_lots pl ON ps.lot_id = pl.id
-            WHERE r.id = ?
-        ''', (reservation_id,))
-        
-        reservation = cursor.fetchone()
-        conn.close()
-        
-        # Invalidate relevant caches
-        invalidate_cache_pattern('*parking_lots*')
-        invalidate_cache_pattern('*analytics*')
-        
-        return jsonify({
-            'message': 'Spot reserved successfully',
-            'reservation': reservation
-        }), 201
-        
+            
+            # Send reservation confirmation email
+            if user_details and user_details['email']:
+                reservation_email_body = f"""
+                <html>
+                <body>
+                    <h2>Parking Spot Reserved Successfully! 🅿️</h2>
+                    <p>Dear {user_details['username']},</p>
+                    <p>Your parking spot has been successfully reserved. Here are the details:</p>
+                    
+                    <div style="background-color: #e8f5e8; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #4CAF50;">
+                        <h3>Reservation Details:</h3>
+                        <p><strong>Reservation ID:</strong> #{reservation_id}</p>
+                        <p><strong>Parking Lot:</strong> {reservation['prime_location_name']}</p>
+                        <p><strong>Spot Number:</strong> {reservation['spot_number']}</p>
+                        <p><strong>Address:</strong> {reservation['address']}</p>
+                        <p><strong>Price:</strong> ${reservation['price']}/hour</p>
+                        <p><strong>Reserved At:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                        <p><strong>Status:</strong> Active</p>
+                    </div>
+                    
+                    <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+                        <h3>Important Notes:</h3>
+                        <ul>
+                            <li>Your parking spot is now reserved and secured</li>
+                            <li>Please arrive at the location to start your parking session</li>
+                            <li>Don't forget to check in when you arrive</li>
+                            <li>You can view your reservation details in your dashboard</li>
+                        </ul>
+                    </div>
+                    
+                    <p>Thank you for using ParkMate!</p>
+                    <p>Safe travels! 🚗</p>
+                    
+                    <p>Best regards,<br>
+                    <strong>The ParkMate Team</strong></p>
+                </body>
+                </html>
+                """
+                
+                send_email(user_details['email'], f"Parking Reserved - {reservation['prime_location_name']}", reservation_email_body)
+            
+            # Clear relevant caches
+            robust_cache_invalidation()
+            
+            logger.info(f"User {session['user_id']} reserved spot {reservation['spot_number']} at {reservation['prime_location_name']}")
+            
+            return jsonify({
+                'message': 'Spot reserved successfully',
+                'reservation': reservation
+            }), 201
+            
+        except Exception as e:
+            cursor.execute('ROLLBACK')
+            raise e
+            
     except Exception as e:
+        logger.error(f"Error in user_reserve_spot: {e}")
         return jsonify({'error': str(e)}), 500
 
 # Get daily report
@@ -3288,6 +2816,7 @@ def user_park_vehicle():
             return jsonify({'error': 'Reservation ID is required'}), 400
         
         conn = get_db()
+        conn.row_factory = dict_factory
         cursor = conn.cursor()
         
         # Update reservation with parking timestamp
@@ -3303,7 +2832,64 @@ def user_park_vehicle():
             return jsonify({'error': 'Invalid reservation or already parked'}), 400
         
         conn.commit()
+        
+        # Get reservation and user details for email notification
+        cursor.execute('''
+            SELECT 
+                r.*,
+                ps.spot_number,
+                pl.prime_location_name,
+                pl.address,
+                u.username,
+                u.email
+            FROM reservations r
+            JOIN parking_spots ps ON r.spot_id = ps.id
+            JOIN parking_lots pl ON ps.lot_id = pl.id
+            JOIN users u ON r.user_id = u.id
+            WHERE r.id = ?
+        ''', (reservation_id,))
+        
+        details = cursor.fetchone()
         conn.close()
+        
+        # Send parking started email
+        if details and details['email']:
+            parking_started_email = f"""
+            <html>
+            <body>
+                <h2>Parking Session Started! 🚗</h2>
+                <p>Dear {details['username']},</p>
+                <p>Your parking session has officially started. Here are the details:</p>
+                
+                <div style="background-color: #e8f5e8; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #4CAF50;">
+                    <h3>Parking Session Details:</h3>
+                    <p><strong>Reservation ID:</strong> #{reservation_id}</p>
+                    <p><strong>Parking Lot:</strong> {details['prime_location_name']}</p>
+                    <p><strong>Spot Number:</strong> {details['spot_number']}</p>
+                    <p><strong>Address:</strong> {details['address']}</p>
+                    <p><strong>Started At:</strong> {parking_time.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                    <p><strong>Status:</strong> Parking Active</p>
+                </div>
+                
+                <div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                    <h3>What's Next?</h3>
+                    <ul>
+                        <li>🕒 Your parking time is now being tracked</li>
+                        <li>💰 Billing will be calculated based on actual usage time</li>
+                        <li>📱 Don't forget to release your spot when leaving</li>
+                        <li>📧 You'll receive a receipt email when you check out</li>
+                    </ul>
+                </div>
+                
+                <p>Enjoy your visit!</p>
+                
+                <p>Best regards,<br>
+                <strong>The ParkMate Team</strong></p>
+            </body>
+            </html>
+            """
+            
+            send_email(details['email'], f"Parking Started - {details['prime_location_name']}", parking_started_email)
         
         # Invalidate user-specific caches
         invalidate_cache_pattern(f'*user:{session["user_id"]}*')
@@ -3332,59 +2918,131 @@ def user_release_spot():
         conn.row_factory = dict_factory
         cursor = conn.cursor()
         
-        # Get reservation details
-        cursor.execute('''
-            SELECT 
-                r.*,
-                ps.spot_number,
-                pl.price
-            FROM reservations r
-            JOIN parking_spots ps ON r.spot_id = ps.id
-            JOIN parking_lots pl ON ps.lot_id = pl.id
-            WHERE r.id = ? AND r.user_id = ? AND r.status = 'active'
-        ''', (reservation_id, session['user_id']))
+        # Use transaction to ensure consistency
+        cursor.execute('BEGIN IMMEDIATE')
         
-        reservation = cursor.fetchone()
-        if not reservation:
+        try:
+            # Get reservation details
+            cursor.execute('''
+                SELECT 
+                    r.*,
+                    ps.spot_number,
+                    pl.price
+                FROM reservations r
+                JOIN parking_spots ps ON r.spot_id = ps.id
+                JOIN parking_lots pl ON ps.lot_id = pl.id
+                WHERE r.id = ? AND r.user_id = ? AND r.status = 'active'
+            ''', (reservation_id, session['user_id']))
+            
+            reservation = cursor.fetchone()
+            if not reservation:
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'Invalid reservation'}), 400
+            
+            if not reservation['parking_timestamp']:
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'Vehicle not yet parked'}), 400
+            
+            # Calculate parking cost
+            leaving_time = datetime.now()
+            parking_start = datetime.fromisoformat(reservation['parking_timestamp'])
+            duration_hours = max(1, (leaving_time - parking_start).total_seconds() / 3600)  # Minimum 1 hour
+            parking_cost = duration_hours * reservation['price']
+            
+            # Update reservation
+            cursor.execute('''
+                UPDATE reservations 
+                SET leaving_timestamp = ?, parking_cost = ?, status = 'completed'
+                WHERE id = ?
+            ''', (leaving_time, parking_cost, reservation_id))
+            
+            # Update spot status to available
+            cursor.execute('UPDATE parking_spots SET status = "A" WHERE id = ?', (reservation['spot_id'],))
+            
+            # Commit transaction
+            cursor.execute('COMMIT')
+            
+            # Get user and lot details for email notification
+            cursor.execute('''
+                SELECT 
+                    u.username,
+                    u.email,
+                    pl.prime_location_name,
+                    pl.address
+                FROM users u
+                JOIN reservations r ON u.id = r.user_id
+                JOIN parking_spots ps ON r.spot_id = ps.id
+                JOIN parking_lots pl ON ps.lot_id = pl.id
+                WHERE r.id = ?
+            ''', (reservation_id,))
+            
+            user_details = cursor.fetchone()
+            
+            conn.commit()
             conn.close()
-            return jsonify({'error': 'Invalid reservation'}), 400
-        
-        if not reservation['parking_timestamp']:
+            
+            # Send parking completion email
+            if user_details and user_details['email']:
+                completion_email = f"""
+                <html>
+                <body>
+                    <h2>Parking Session Completed! 📊</h2>
+                    <p>Dear {user_details['username']},</p>
+                    <p>Your parking session has been successfully completed. Here's your receipt:</p>
+                    
+                    <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; border: 2px solid #dee2e6;">
+                        <h3>🧾 Parking Receipt</h3>
+                        <p><strong>Reservation ID:</strong> #{reservation_id}</p>
+                        <p><strong>Parking Lot:</strong> {user_details['prime_location_name']}</p>
+                        <p><strong>Spot Number:</strong> {reservation['spot_number']}</p>
+                        <p><strong>Address:</strong> {user_details['address']}</p>
+                        <p><strong>Started At:</strong> {reservation['parking_timestamp']}</p>
+                        <p><strong>Ended At:</strong> {leaving_time.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                        <p><strong>Duration:</strong> {round(duration_hours, 2)} hours</p>
+                        <p><strong>Rate:</strong> ${reservation['price']}/hour</p>
+                        <div style="background-color: #e8f5e8; padding: 10px; border-radius: 3px; margin-top: 10px;">
+                            <p><strong>Total Cost: ${round(parking_cost, 2)}</strong></p>
+                        </div>
+                    </div>
+                    
+                    <div style="background-color: #cce5ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <h3>Thank You!</h3>
+                        <p>✅ Your parking spot has been released and is now available for other users</p>
+                        <p>📈 This session has been added to your parking history</p>
+                        <p>⭐ We hope you had a great experience with ParkMate!</p>
+                    </div>
+                    
+                    <p>Thank you for choosing ParkMate for your parking needs!</p>
+                    
+                    <p>Best regards,<br>
+                    <strong>The ParkMate Team</strong></p>
+                </body>
+                </html>
+                """
+                
+                send_email(user_details['email'], f"Parking Receipt - ${round(parking_cost, 2)}", completion_email)
+            
+            # Invalidate relevant caches
+            robust_cache_invalidation()
+            
+            logger.info(f"User {session['user_id']} released spot {reservation['spot_number']}, cost: ${round(parking_cost, 2)}")
+            
+            return jsonify({
+                'message': 'Spot released successfully',
+                'leaving_timestamp': leaving_time.isoformat(),
+                'parking_cost': round(parking_cost, 2),
+                'duration_hours': round(duration_hours, 2)
+            }), 200
+            
+        except Exception as e:
+            cursor.execute('ROLLBACK')
             conn.close()
-            return jsonify({'error': 'Vehicle not yet parked'}), 400
-        
-        # Calculate parking cost
-        leaving_time = datetime.now()
-        parking_start = datetime.fromisoformat(reservation['parking_timestamp'])
-        duration_hours = max(1, (leaving_time - parking_start).total_seconds() / 3600)  # Minimum 1 hour
-        parking_cost = duration_hours * reservation['price']
-        
-        # Update reservation
-        cursor.execute('''
-            UPDATE reservations 
-            SET leaving_timestamp = ?, parking_cost = ?, status = 'completed'
-            WHERE id = ?
-        ''', (leaving_time, parking_cost, reservation_id))
-        
-        # Update spot status to available
-        cursor.execute('UPDATE parking_spots SET status = "A" WHERE id = ?', (reservation['spot_id'],))
-        
-        conn.commit()
-        conn.close()
-        
-        # Invalidate relevant caches
-        invalidate_cache_pattern('*parking_lots*')
-        invalidate_cache_pattern('*analytics*')
-        invalidate_cache_pattern(f'*user:{session["user_id"]}*')
-        
-        return jsonify({
-            'message': 'Spot released successfully',
-            'leaving_timestamp': leaving_time.isoformat(),
-            'parking_cost': round(parking_cost, 2),
-            'duration_hours': round(duration_hours, 2)
-        }), 200
+            raise e
         
     except Exception as e:
+        logger.error(f"Error releasing spot: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/user/my-reservations', methods=['GET'])
@@ -3392,8 +3050,7 @@ def user_reservations():
     if not session.get('user_id') or session.get('is_admin'):
         return jsonify({'error': 'User access required'}), 403
     
-    @cached(timeout=CACHE_TIMEOUT, key_prefix=f'user:{session["user_id"]}')
-    def get_user_reservations():
+    try:
         conn = get_db()
         conn.row_factory = dict_factory
         cursor = conn.cursor()
@@ -3414,10 +3071,12 @@ def user_reservations():
         
         reservations = cursor.fetchall()
         conn.close()
-        return reservations
-    
-    reservations = get_user_reservations()
-    return jsonify({'reservations': reservations}), 200
+        
+        return jsonify({'reservations': reservations}), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching user reservations: {e}")
+        return jsonify({'error': 'Failed to fetch reservations'}), 500
 
 @app.route('/api/user/analytics', methods=['GET'])
 def user_analytics():
@@ -3908,71 +3567,45 @@ if __name__ == '__main__':
     init_db()
     print("Database initialized successfully!")
     print("Admin credentials: username='admin', password='admin123'")
-    print("\n🚗 ParkMate Email Service Features:")
-    print("=" * 60)
-    print("✅ Welcome emails for new user registrations")
-    print("✅ Daily parking reminders (scheduled)")
-    print("✅ Monthly activity reports (HTML format)")
-    print("✅ CSV export notifications")
-    print("✅ Email management dashboard (admin)")
-    print("✅ Google Chat webhook support")
-    print("✅ Email logging and analytics")
-    print("✅ User notification preferences")
-    print("\n📧 Email Types Implemented:")
-    print("   1. Welcome Email - Professional onboarding")
-    print("   2. Daily Reminders - Smart parking alerts")
-    print("   3. Monthly Reports - Comprehensive activity analysis")
-    print("   4. CSV Export - Data delivery notifications")
-    print("   5. Admin Notifications - System management alerts")
-    print("\n🔄 Background Jobs:")
-    print("   - Daily reminders: Every evening at user-preferred time")
-    print("   - Monthly reports: 1st of every month at 9 AM")
-    print("   - CSV exports: On-demand user-triggered jobs")
-    print("   - Welcome emails: Automatic on registration")
-    print("   - Cleanup jobs: Automated system maintenance")
-    print("\n⚙️  Setup Instructions:")
-    print("   1. Run setup: python setup_email_service.py")
-    print("   2. Start Redis: redis-server")
-    print("   3. Start services: ./start_email_service.sh")
-    print("   4. Test setup: python test_email_features.py")
-    print("\n📊 New API Endpoints:")
-    print("User Endpoints:")
+    print("\nRedis & Celery Features Added:")
+    print("- Redis caching for improved performance")
+    print("- Background task processing with Celery")
+    print("- Periodic cleanup of expired reservations")
+    print("- Daily report generation")
+    print("- Parking optimization analysis")
+    print("- Cache management endpoints")
+    print("- Health check endpoint")
+    print("\nNew Backend Jobs Added:")
+    print("- Daily reminders via email/Google Chat")
+    print("- Monthly activity reports via email")
+    print("- CSV export for user parking data")
+    print("\nNew API Endpoints:")
+    print("Batch Jobs:")
+    print("  GET/POST /api/admin/batch-jobs - Manage batch jobs")
+    print("  GET /api/admin/batch-jobs/<id>/status - Check job status")
+    print("Reports:")
+    print("  GET /api/admin/reports/daily/<date> - Get daily report")
+    print("  GET /api/admin/optimization - Get optimization recommendations")
+    print("Cache Management:")
+    print("  GET /api/admin/cache/stats - Redis statistics")
+    print("  POST /api/admin/cache/clear - Clear cache")
+    print("User Features:")
     print("  GET/POST /api/user/preferences - Manage notification preferences")
     print("  POST /api/user/export-csv - Request CSV export")
     print("  GET /api/user/export-status/<id> - Check export status")
-    print("  GET /api/user/emails/history - View email history")
-    print("Admin Endpoints:")
-    print("  GET /api/admin/emails/notifications - Email management dashboard")
-    print("  GET /api/admin/emails/stats - Email statistics and analytics")
-    print("  POST /api/admin/emails/test - Test email configuration")
-    print("  POST /api/admin/trigger-daily-reminders - Manual reminder trigger")
-    print("  POST /api/admin/trigger-monthly-report - Manual report trigger")
-    print("\n🛠️  Technical Stack:")
-    print("   - SMTP: Gmail with app passwords")
-    print("   - Queue: Celery with Redis backend")
-    print("   - Templates: Responsive HTML emails")
-    print("   - Scheduling: Celery Beat cron jobs")
-    print("   - Logging: Database-backed notification tracking")
-    print("\n🔐 Security Features:")
-    print("   - App password authentication")
-    print("   - User consent for notifications")
-    print("   - Secure email template rendering")
-    print("   - Rate limiting and error handling")
-    print("\n📚 Documentation:")
-    print("   - README_EMAIL_FEATURES.md - Complete feature guide")
-    print("   - EMAIL_SERVICE_DOCS.md - Technical documentation")
-    print("   - setup_email_service.py - Interactive setup wizard")
-    print("   - test_email_features.py - Comprehensive test suite")
-    print("\n🎯 All Requirements Met:")
-    print("   ✅ a. Daily reminders with user time preference")
-    print("   ✅ b. Monthly HTML reports via email")
-    print("   ✅ c. CSV export with email notifications")
-    print("   ✅ Registration welcome emails")
-    print("   ✅ Multiple delivery methods (Email/Google Chat)")
-    print("   ✅ Admin management dashboard")
-    print("\n🚀 Your ParkMate email service is ready!")
-    print("Run 'python setup_email_service.py' to get started!")
-    print("=" * 60)
+    print("Admin Triggers:")
+    print("  POST /api/admin/trigger-daily-reminders - Manually trigger reminders")
+    print("  POST /api/admin/trigger-monthly-report - Manually trigger monthly reports")
+    print("Health:")
+    print("  GET /api/health - System health check")
+    print("\nEnvironment Variables to Set:")
+    print("  EMAIL_USERNAME - Your Gmail address")
+    print("  EMAIL_PASSWORD - Your Gmail app password")
+    print("  GOOGLE_CHAT_WEBHOOK - Google Chat webhook URL (optional)")
+    print("\nTo start Celery worker:")
+    print("celery -A main.celery worker --loglevel=info")
+    print("\nTo start Celery beat (scheduler):")
+    print("celery -A main.celery beat --loglevel=info")
     
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    app.run(debug=True, host='0.0.0.0', port=5000)
 

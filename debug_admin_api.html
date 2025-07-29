@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .debug {
+            font-size: 12px;
+            color: #666;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Admin Dashboard API Test</h1>
+        <p>Use this page to test your admin dashboard API endpoints and debug authentication issues.</p>
+        
+        <div>
+            <h2>Step 1: Admin Login</h2>
+            <button onclick="adminLogin()">Login as Admin</button>
+            <div id="loginStatus"></div>
+        </div>
+        
+        <div>
+            <h2>Step 2: Test Dashboard Data</h2>
+            <button onclick="testDashboardData()">Get Dashboard Data</button>
+            <div id="dashboardStatus"></div>
+        </div>
+        
+        <div>
+            <h2>Step 3: Test Health Check</h2>
+            <button onclick="testHealthCheck()">Check Server Health</button>
+            <div id="healthStatus"></div>
+        </div>
+        
+        <div id="debugInfo"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5000';
+        
+        function showStatus(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+        
+        function showDebug(info) {
+            document.getElementById('debugInfo').innerHTML = `
+                <div class="container">
+                    <h3>🐛 Debug Information</h3>
+                    <pre>${JSON.stringify(info, null, 2)}</pre>
+                </div>
+            `;
+        }
+        
+        async function adminLogin() {
+            showStatus('loginStatus', 'Logging in...', 'info');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        username: 'admin',
+                        password: 'admin123'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showStatus('loginStatus', `✅ Login successful! Welcome ${data.user.username}`, 'success');
+                    showDebug({
+                        status: 'Login Success',
+                        user: data.user,
+                        response_status: response.status
+                    });
+                } else {
+                    showStatus('loginStatus', `❌ Login failed: ${data.error}`, 'error');
+                    showDebug({
+                        status: 'Login Failed',
+                        error: data.error,
+                        response_status: response.status
+                    });
+                }
+            } catch (error) {
+                showStatus('loginStatus', `❌ Network error: ${error.message}`, 'error');
+                showDebug({
+                    status: 'Network Error',
+                    error: error.message
+                });
+            }
+        }
+        
+        async function testDashboardData() {
+            showStatus('dashboardStatus', 'Fetching dashboard data...', 'info');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/analytics/dashboard-data`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    showStatus('dashboardStatus', '✅ Dashboard data loaded successfully!', 'success');
+                    showDebug({
+                        status: 'Dashboard Success',
+                        data_keys: Object.keys(data),
+                        occupancy_count: data.occupancy?.length || 0,
+                        revenue_count: data.revenue?.length || 0,
+                        timestamp: data.timestamp
+                    });
+                } else {
+                    const errorText = await response.text();
+                    showStatus('dashboardStatus', `❌ Dashboard failed: HTTP ${response.status}`, 'error');
+                    showDebug({
+                        status: 'Dashboard Failed',
+                        response_status: response.status,
+                        error: errorText
+                    });
+                }
+            } catch (error) {
+                showStatus('dashboardStatus', `❌ Network error: ${error.message}`, 'error');
+                showDebug({
+                    status: 'Network Error',
+                    error: error.message
+                });
+            }
+        }
+        
+        async function testHealthCheck() {
+            showStatus('healthStatus', 'Checking server health...', 'info');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/health`, {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    showStatus('healthStatus', '✅ Server is healthy!', 'success');
+                    showDebug({
+                        status: 'Health Check Success',
+                        server_status: data.status,
+                        services: data.services,
+                        timestamp: data.timestamp
+                    });
+                } else {
+                    showStatus('healthStatus', `❌ Health check failed: HTTP ${response.status}`, 'error');
+                }
+            } catch (error) {
+                showStatus('healthStatus', `❌ Cannot reach server: ${error.message}`, 'error');
+                showDebug({
+                    status: 'Server Unreachable',
+                    error: error.message,
+                    api_base: API_BASE
+                });
+            }
+        }
+        
+        // Auto-run health check on page load
+        window.onload = function() {
+            testHealthCheck();
+        };
+    </script>
+</body>
+</html>
