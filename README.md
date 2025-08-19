@@ -744,8 +744,7 @@ copies or substantial portions of the Software.
 
 | Role | Name | GitHub | Contact |
 |------|------|--------|---------|
-| **Lead Developer** | Deepesh Kumar | [@Deepesh1604](https://github.com/Deepesh1604) | deepesh@example.com |
-| **Contributor** | Your Name | [@yourusername](https://github.com/yourusername) | your@email.com |
+| **Lead Developer** | Deepesh Kumar | [@Deepesh1604](https://github.com/Deepesh1604) 
 
 ## 🙏 Acknowledgments
 
