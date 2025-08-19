@@ -419,7 +419,8 @@ export default {
             position: 'bottom',
             labels: {
               padding: 20,
-              usePointStyle: true
+              usePointStyle: true,
+              color: 'white'
             }
           },
           tooltip: {
@@ -441,19 +442,28 @@ export default {
         maintainAspectRatio: false,
         plugins: {
           legend: {
-            position: 'top'
+            position: 'top',
+            labels: {
+              color: '#ffffff'
+            }
           }
         },
         scales: {
           y: {
             beginAtZero: true,
             grid: {
-              color: 'rgba(0, 0, 0, 0.1)'
+              color: 'rgba(255, 255, 255, 0.2)'
+            },
+            ticks: {
+              color: '#ffffff'
             }
           },
           x: {
             grid: {
               display: false
+            },
+            ticks: {
+              color: '#ffffff'
             }
           }
         }
@@ -473,15 +483,19 @@ export default {
           y: {
             beginAtZero: true,
             grid: {
-              color: 'rgba(0, 0, 0, 0.1)'
+              color: 'rgba(255, 255, 255, 0.2)'
             },
             ticks: {
-              callback: (value) => `$${value}`
+              callback: (value) => `$${value}`,
+              color: '#ffffff'
             }
           },
           x: {
             grid: {
               display: false
+            },
+            ticks: {
+              color: '#ffffff'
             }
           }
         }
@@ -501,15 +515,19 @@ export default {
           y: {
             beginAtZero: true,
             grid: {
-              color: 'rgba(0, 0, 0, 0.1)'
+              color: 'rgba(255, 255, 255, 0.2)'
             },
             ticks: {
-              callback: (value) => `$${value}`
+              callback: (value) => `$${value}`,
+              color: '#ffffff'
             }
           },
           x: {
             grid: {
               display: false
+            },
+            ticks: {
+              color: '#ffffff'
             }
           }
         }
@@ -529,12 +547,18 @@ export default {
           y: {
             beginAtZero: true,
             grid: {
-              color: 'rgba(0, 0, 0, 0.1)'
+              color: 'rgba(255, 255, 255, 0.2)'
+            },
+            ticks: {
+              color: '#ffffff'
             }
           },
           x: {
             grid: {
               display: false
+            },
+            ticks: {
+              color: '#ffffff'
             }
           }
         }
@@ -550,7 +574,8 @@ export default {
             position: 'bottom',
             labels: {
               padding: 20,
-              usePointStyle: true
+              usePointStyle: true,
+              color: '#ffffff'
             }
           }
         }
@@ -563,7 +588,10 @@ export default {
         maintainAspectRatio: false,
         plugins: {
           legend: {
-            position: 'top'
+            position: 'top',
+            labels: {
+              color: 'white'
+            }
           }
         },
         scales: {
@@ -573,11 +601,15 @@ export default {
             position: 'left',
             beginAtZero: true,
             grid: {
-              color: 'rgba(0, 0, 0, 0.1)'
+              color: 'rgba(255, 255, 255, 0.2)'
             },
             title: {
               display: true,
-              text: 'Reservations'
+              text: 'Reservations',
+              color: 'white'
+            },
+            ticks: {
+              color: 'white'
             }
           },
           y1: {
@@ -586,19 +618,25 @@ export default {
             position: 'right',
             beginAtZero: true,
             grid: {
-              drawOnChartArea: false
+              drawOnChartArea: false,
+              color: 'rgba(255, 255, 255, 0.2)'
             },
             title: {
               display: true,
-              text: 'Amount Spent ($)'
+              text: 'Amount Spent ($)',
+              color: 'white'
             },
             ticks: {
-              callback: (value) => `$${value}`
+              callback: (value) => `$${value}`,
+              color: 'white'
             }
           },
           x: {
             grid: {
               display: false
+            },
+            ticks: {
+              color: 'white'
             }
           }
         }
@@ -720,11 +758,10 @@ export default {
 <style scoped>
 .reports-view {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  color: #2c3e50;
+  color: white;
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
-  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
   min-height: 100vh;
 }
 
@@ -733,19 +770,22 @@ export default {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 30px;
-  background: white;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   padding: 20px;
-  border-radius: 15px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.15);
 }
 
 .header-section h1 {
   margin: 0;
   font-size: 2.5em;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  font-weight: 700;
 }
 
 .action-buttons {
@@ -755,29 +795,34 @@ export default {
 }
 
 .refresh-btn, .export-btn {
-  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
   padding: 12px 20px;
-  border-radius: 25px;
+  border-radius: 12px;
   cursor: pointer;
   font-weight: 600;
-  transition: all 0.3s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   align-items: center;
   gap: 8px;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .refresh-btn:hover, .export-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+  background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
 }
 
 .refresh-btn:disabled {
-  background: #bdc3c7;
+  background: rgba(255, 255, 255, 0.2);
   cursor: not-allowed;
   transform: none;
-  box-shadow: none;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+  opacity: 0.6;
 }
 
 .dropdown-container {
@@ -788,9 +833,11 @@ export default {
   position: absolute;
   top: 100%;
   right: 0;
-  background: white;
-  border-radius: 10px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(25px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 12px;
+  box-shadow: 0 15px 35px rgba(102, 126, 234, 0.2);
   z-index: 1000;
   min-width: 180px;
   overflow: hidden;
@@ -807,12 +854,15 @@ export default {
   border: none;
   text-align: left;
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  transition: all 0.2s ease;
   font-size: 14px;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
 }
 
 .dropdown-item:hover {
-  background-color: #f8f9fa;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
 }
 
 .btn-icon, .item-icon {
@@ -826,27 +876,28 @@ export default {
 
 .status-message {
   padding: 15px 20px;
-  border-radius: 10px;
+  border-radius: 12px;
   margin-bottom: 20px;
   font-weight: 500;
+  backdrop-filter: blur(10px);
 }
 
 .status-message.success {
-  background: #d4edda;
-  color: #155724;
-  border-left: 4px solid #28a745;
+  background: rgba(102, 126, 234, 0.2);
+  color: #ffffff;
+  border: 1px solid rgba(102, 126, 234, 0.4);
 }
 
 .status-message.error {
-  background: #f8d7da;
-  color: #721c24;
-  border-left: 4px solid #dc3545;
+  background: rgba(240, 147, 251, 0.2);
+  color: #ffffff;
+  border: 1px solid rgba(240, 147, 251, 0.4);
 }
 
 .status-message.info {
-  background: #d1ecf1;
-  color: #0c5460;
-  border-left: 4px solid #17a2b8;
+  background: rgba(79, 172, 254, 0.2);
+  color: #ffffff;
+  border: 1px solid rgba(79, 172, 254, 0.4);
 }
 
 .loading-spinner {
@@ -855,15 +906,17 @@ export default {
   align-items: center;
   justify-content: center;
   padding: 50px;
-  background: white;
-  border-radius: 15px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.15);
 }
 
 .spinner {
   width: 50px;
   height: 50px;
-  border: 4px solid #f3f3f3;
+  border: 4px solid rgba(255, 255, 255, 0.3);
   border-top: 4px solid #667eea;
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -881,17 +934,20 @@ export default {
 }
 
 .metrics-section {
-  background: white;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   padding: 25px;
-  border-radius: 15px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.15);
 }
 
 .metrics-section h2 {
   margin-top: 0;
   margin-bottom: 20px;
   font-size: 1.5em;
-  color: #2c3e50;
+  color: white;
+  font-weight: 600;
 }
 
 .metrics-grid {
@@ -906,13 +962,21 @@ export default {
   padding: 20px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.metric-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 15px 35px rgba(102, 126, 234, 0.4);
 }
 
 .metric-icon {
   font-size: 2.5em;
   margin-right: 15px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
 }
 
 .metric-content h3 {
@@ -928,17 +992,20 @@ export default {
 }
 
 .chart-section {
-  background: white;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   padding: 25px;
-  border-radius: 15px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.15);
 }
 
 .chart-section h2 {
   margin-top: 0;
   margin-bottom: 25px;
   font-size: 1.5em;
-  color: #2c3e50;
+  color: white;
+  font-weight: 600;
 }
 
 .chart-grid {
@@ -948,10 +1015,17 @@ export default {
 }
 
 .chart-container {
-  background: #f8f9fa;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(15px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   padding: 20px;
   border-radius: 12px;
-  border: 1px solid #e9ecef;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.chart-container:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
 }
 
 .chart-container.full-width {
@@ -962,8 +1036,9 @@ export default {
   margin-top: 0;
   margin-bottom: 20px;
   font-size: 1.1em;
-  color: #495057;
+  color: rgba(255, 255, 255, 0.9);
   text-align: center;
+  font-weight: 600;
 }
 
 .chart-wrapper {

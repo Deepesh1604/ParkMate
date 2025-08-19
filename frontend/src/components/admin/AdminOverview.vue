@@ -123,18 +123,23 @@ watch(() => props.analytics, (newVal) => {
 <style scoped>
 .admin-overview h2 {
   margin-bottom: 2rem;
-  color: #2c3e50;
+  color: white;
+  background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .debug-info {
-  background: #f8f9fa;
-  border: 1px solid #dee2e6;
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
   padding: 1rem;
   margin-bottom: 1rem;
   font-family: monospace;
   font-size: 0.875rem;
-  color: #6c757d;
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .stats-grid {
@@ -145,36 +150,47 @@ watch(() => props.analytics, (newVal) => {
 }
 
 .stat-card {
-  background-color: #f8f9fa;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
   padding: 1.5rem;
   display: flex;
   align-items: center;
   gap: 1rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  transition: transform 0.3s;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .stat-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-5px);
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 15px 40px rgba(102, 126, 234, 0.2);
 }
 
 .stat-icon {
   font-size: 2rem;
   min-width: 50px;
   text-align: center;
+  filter: drop-shadow(0 2px 4px rgba(102, 126, 234, 0.3));
 }
 
 .stat-content h3 {
   margin: 0;
   font-size: 1.8rem;
-  color: #2c3e50;
+  background: linear-gradient(135deg, #ffffff 0%, #e0e0e0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 700;
 }
 
 .stat-content p {
   margin: 0.5rem 0 0 0;
-  color: #7f8c8d;
+  color: rgba(255, 255, 255, 0.8);
   font-size: 0.9rem;
+  font-weight: 500;
 }
 
 .charts-section {
@@ -183,13 +199,21 @@ watch(() => props.analytics, (newVal) => {
 
 .charts-section h3 {
   margin-bottom: 1rem;
-  color: #2c3e50;
+  color: white;
+  background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 600;
 }
 
 .occupancy-chart {
-  background-color: #f8f9fa;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
   padding: 1.5rem;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.1);
 }
 
 .lot-cards {
@@ -199,47 +223,82 @@ watch(() => props.analytics, (newVal) => {
 }
 
 .lot-card {
-  background-color: white;
-  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(15px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 12px;
   padding: 1rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 20px rgba(102, 126, 234, 0.08);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.lot-card:hover {
+  transform: translateY(-3px);
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 8px 30px rgba(102, 126, 234, 0.15);
 }
 
 .lot-card h4 {
   margin: 0 0 1rem 0;
-  color: #2c3e50;
+  color: white;
+  font-weight: 600;
 }
 
 .occupancy-bar {
-  background-color: #e9ecef;
+  background: rgba(255, 255, 255, 0.2);
   height: 20px;
   border-radius: 10px;
   overflow: hidden;
   margin-bottom: 0.5rem;
+  backdrop-filter: blur(5px);
 }
 
 .occupancy-fill {
   height: 100%;
-  background: linear-gradient(90deg, #42b883 0%, #f39c12 70%, #e74c3c 100%);
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 70%, #f093fb 100%);
   transition: width 0.3s ease;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
 }
 
 .occupancy-details {
   display: flex;
   justify-content: space-between;
   font-size: 0.9rem;
-  color: #7f8c8d;
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .occupancy-rate {
   font-weight: bold;
-  color: #2c3e50;
+  color: white;
 }
 
 .no-data {
   text-align: center;
-  color: #7f8c8d;
+  color: rgba(255, 255, 255, 0.7);
   padding: 2rem;
+}
+
+.refresh-btn {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-left: 1rem;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+  font-weight: 500;
+}
+
+.refresh-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+  background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
 }
 
 @media (max-width: 768px) {
@@ -252,19 +311,3 @@ watch(() => props.analytics, (newVal) => {
   }
 }
 </style>
-
-/* Add refresh button styles */
-.refresh-btn {
-  background: #42b883;
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  padding: 0.5rem 1rem;
-  font-size: 1rem;
-  cursor: pointer;
-  transition: background 0.2s;
-  margin-left: 1rem;
-}
-.refresh-btn:hover {
-  background: #369870;
-}

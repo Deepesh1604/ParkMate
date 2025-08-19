@@ -197,49 +197,68 @@ onMounted(() => {
 <style scoped>
 .parking-spots-view h2 {
   margin-bottom: 2rem;
-  color: #2c3e50;
+  color: white;
+  background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 600;
 }
 
 .lot-section {
   margin-bottom: 3rem;
   padding: 1.5rem;
-  background-color: #f8f9fa;
-  border-radius: 8px;
-  border: 1px solid #dee2e6;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.lot-section:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 15px 40px rgba(102, 126, 234, 0.2);
 }
 
 .lot-section h3 {
-  color: #2c3e50;
+  color: white;
   margin-bottom: 1rem;
   margin-top: 0;
   font-size: 1.3rem;
+  font-weight: 600;
 }
 
 .lot-stats {
   display: flex;
   gap: 1rem;
   margin-bottom: 1rem;
-  padding: 0.5rem;
-  background-color: white;
-  border-radius: 4px;
-  border: 1px solid #e9ecef;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .lot-stats .stat {
-  padding: 0.25rem 0.75rem;
-  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
   font-size: 0.875rem;
   font-weight: 500;
+  backdrop-filter: blur(10px);
 }
 
 .lot-stats .stat.available {
-  background-color: #d4edda;
-  color: #155724;
+  background: linear-gradient(135deg, rgba(76, 175, 80, 0.3) 0%, rgba(102, 187, 106, 0.2) 100%);
+  color: #ffffff;
+  border: 1px solid rgba(76, 175, 80, 0.5);
 }
 
 .lot-stats .stat.occupied {
-  background-color: #f8d7da;
-  color: #721c24;
+  background: linear-gradient(135deg, rgba(244, 67, 54, 0.3) 0%, rgba(197, 37, 34, 0.2) 100%);
+  color: #ffffff;
+  border: 1px solid rgba(244, 67, 54, 0.5);
 }
 
 .all-lots-view {
@@ -253,15 +272,31 @@ onMounted(() => {
 .filter-section label {
   display: block;
   margin-bottom: 0.5rem;
-  font-weight: bold;
-  color: #2c3e50;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .filter-section select {
-  padding: 0.5rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  padding: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
   min-width: 200px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  color: white;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.filter-section select:focus {
+  outline: none;
+  border-color: rgba(102, 126, 234, 0.6);
+  background: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+}
+
+.filter-section select option {
+  background: #667eea;
+  color: white;
 }
 
 .spots-grid {
@@ -272,40 +307,57 @@ onMounted(() => {
 }
 
 .spot-card {
-  background-color: white;
-  border: 2px solid #ddd;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(15px);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
   padding: 1rem;
   text-align: center;
   cursor: pointer;
-  transition: all 0.3s;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   min-height: 80px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
+  box-shadow: 0 4px 20px rgba(102, 126, 234, 0.08);
 }
 
 .spot-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+  transform: translateY(-5px);
+  box-shadow: 0 15px 35px rgba(102, 126, 234, 0.2);
 }
 
 .spot-card.available {
-  border-color: #28a745;
-  background-color: #d4edda;
+  border-color: rgba(76, 175, 80, 0.5);
+  background: linear-gradient(135deg, rgba(76, 175, 80, 0.2) 0%, rgba(102, 187, 106, 0.15) 100%);
+  box-shadow: 0 4px 20px rgba(76, 175, 80, 0.12);
+}
+
+.spot-card.available:hover {
+  border-color: rgba(76, 175, 80, 0.7);
+  background: linear-gradient(135deg, rgba(76, 175, 80, 0.3) 0%, rgba(102, 187, 106, 0.25) 100%);
+  box-shadow: 0 15px 35px rgba(76, 175, 80, 0.25);
 }
 
 .spot-card.occupied {
-  border-color: #dc3545;
-  background-color: #f8d7da;
+  border-color: rgba(244, 67, 54, 0.5);
+  background: linear-gradient(135deg, rgba(244, 67, 54, 0.2) 0%, rgba(239, 83, 80, 0.15) 100%);
+  box-shadow: 0 4px 20px rgba(244, 67, 54, 0.12);
+}
+
+.spot-card.occupied:hover {
+  border-color: rgba(244, 67, 54, 0.7);
+  background: linear-gradient(135deg, rgba(244, 67, 54, 0.3) 0%, rgba(239, 83, 80, 0.25) 100%);
+  box-shadow: 0 15px 35px rgba(244, 67, 54, 0.25);
 }
 
 .spot-number {
   font-size: 1.3rem;
   font-weight: bold;
-  color: #2c3e50;
+  color: white;
   margin-bottom: 0.25rem;
+  text-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
 }
 
 .spot-status {
@@ -313,14 +365,7 @@ onMounted(() => {
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-}
-
-.spot-card.available .spot-status {
-  color: #155724;
-}
-
-.spot-card.occupied .spot-status {
-  color: #721c24;
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .modal-overlay {
@@ -329,7 +374,8 @@ onMounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
+  background-color: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(5px);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -337,37 +383,45 @@ onMounted(() => {
 }
 
 .modal-content {
-  background-color: white;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(25px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   padding: 2rem;
-  border-radius: 8px;
+  border-radius: 16px;
   max-width: 500px;
   width: 90%;
   max-height: 80vh;
   overflow-y: auto;
+  box-shadow: 0 20px 40px rgba(102, 126, 234, 0.2);
 }
 
 .modal-content h3 {
   margin-top: 0;
-  color: #2c3e50;
+  color: white;
+  font-weight: 600;
 }
 
 .modal-content h4 {
   margin-top: 1.5rem;
-  color: #2c3e50;
+  color: white;
+  font-weight: 600;
 }
 
 .modal-content p {
-color:#080808ff;
+  color: rgba(255, 255, 255, 0.9);
   margin: 0.5rem 0;
+  font-weight: 500;
 }
 
 .modal-content button {
   border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
   cursor: pointer;
   margin: 0.25rem;
-  transition: background-color 0.3s;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-weight: 500;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
 }
 
 .modal-actions {
@@ -378,21 +432,24 @@ color:#080808ff;
 }
 
 .btn-close {
-  background-color: #6c757d;
+  background: rgba(255, 255, 255, 0.2);
   color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .btn-close:hover {
-  background-color: #5a6268;
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
 }
 
 .btn-free {
-  background-color: #28a745;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
 }
 
 .btn-free:hover {
-  background-color: #218838;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
 }
 
 @media (max-width: 768px) {
@@ -417,6 +474,10 @@ color:#080808ff;
   .lot-stats {
     flex-direction: column;
     gap: 0.5rem;
+  }
+  
+  .modal-content {
+    padding: 1.5rem;
   }
 }
 </style>

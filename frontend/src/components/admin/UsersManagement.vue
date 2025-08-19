@@ -291,7 +291,12 @@ onMounted(() => {
 <style scoped>
 .users-management h2 {
   margin-bottom: 2rem;
-  color: #2c3e50;
+  color: white;
+  background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 600;
 }
 
 .users-stats {
@@ -302,22 +307,37 @@ onMounted(() => {
 }
 
 .stat-card {
-  background-color: #f8f9fa;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
   padding: 1.5rem;
   text-align: center;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stat-card:hover {
+  transform: translateY(-5px);
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 15px 40px rgba(102, 126, 234, 0.2);
 }
 
 .stat-card h3 {
   margin: 0;
   font-size: 2rem;
-  color: #2c3e50;
+  background: linear-gradient(135deg, #ffffff 0%, #e0e0e0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 700;
 }
 
 .stat-card p {
   margin: 0.5rem 0 0 0;
-  color: #7f8c8d;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
 }
 
 .search-section {
@@ -328,9 +348,24 @@ onMounted(() => {
   width: 100%;
   max-width: 400px;
   padding: 0.75rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
   font-size: 1rem;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  color: white;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.search-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: rgba(102, 126, 234, 0.6);
+  background: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
 }
 
 .users-table {
@@ -340,27 +375,30 @@ onMounted(() => {
 table {
   width: 100%;
   border-collapse: collapse;
-  background-color: white;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.1);
 }
 
 th, td {
   padding: 1rem;
   text-align: left;
-  border-bottom: 1px solid #e9ecef;
-  color: #000;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
 }
 
 th {
-  background-color: #f8f9fa;
+  background: rgba(255, 255, 255, 0.15);
   font-weight: bold;
-  color: #2c3e50;
+  color: white;
+  backdrop-filter: blur(10px);
 }
 
 tr:hover {
-  background-color: #f8f9fa;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .status-badge {
@@ -368,21 +406,25 @@ tr:hover {
   border-radius: 20px;
   font-size: 0.875rem;
   font-weight: bold;
+  backdrop-filter: blur(10px);
 }
 
 .status-badge.active {
-  background-color: #d4edda;
-  color: #155724;
+  background: rgba(102, 126, 234, 0.3);
+  color: #ffffff;
+  border: 1px solid rgba(102, 126, 234, 0.5);
 }
 
 .status-badge.inactive {
-  background-color: #fff3cd;
-  color: #856404;
+  background: rgba(240, 147, 251, 0.3);
+  color: #ffffff;
+  border: 1px solid rgba(240, 147, 251, 0.5);
 }
 
 .status-badge.new {
-  background-color: #d1ecf1;
-  color: #0c5460;
+  background: rgba(79, 172, 254, 0.3);
+  color: #ffffff;
+  border: 1px solid rgba(79, 172, 254, 0.5);
 }
 
 .action-buttons {

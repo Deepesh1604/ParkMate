@@ -1,48 +1,102 @@
 <template>
   <div class="admin-dashboard">
+    <!-- Animated background matching theme -->
+    <div class="background-animation">
+      <div class="floating-shapes">
+        <div class="shape shape-1"></div>
+        <div class="shape shape-2"></div>
+        <div class="shape shape-3"></div>
+        <div class="shape shape-4"></div>
+        <div class="shape shape-5"></div>
+        <div class="shape shape-6"></div>
+      </div>
+      <div class="gradient-orb orb-1"></div>
+      <div class="gradient-orb orb-2"></div>
+      <div class="gradient-orb orb-3"></div>
+    </div>
+
+    <!-- Professional Header -->
     <div class="dashboard-header">
-      <h1>🚗 Admin Dashboard</h1>
-      <div class="admin-info">
-        <span>Welcome, {{ admin.username || 'Admin' }}</span>
-        <button @click="logout" class="logout-btn">Logout</button>
+      <div class="header-content">
+        <div class="brand-section">
+          <div class="logo-icon">P</div>
+          <h1>ParkMate Admin</h1>
+        </div>
+        <div class="admin-info">
+          <div class="admin-details">
+            <span class="welcome-text">Welcome back,</span>
+            <span class="admin-name">{{ admin.username || 'Admin' }}</span>
+          </div>
+          <button @click="logout" class="logout-btn">
+            <span class="logout-icon">⚡</span>
+            Logout
+          </button>
+        </div>
       </div>
     </div>
 
+    <!-- Glass Morphism Navigation -->
     <div class="dashboard-nav">
-      <button 
-        v-for="tab in tabs" 
-        :key="tab.id" 
-        :class="['nav-btn', { active: activeTab === tab.id }]"
-        @click="activeTab = tab.id"
-      >
-        {{ tab.name }}
-      </button>
+      <div class="nav-container">
+        <button 
+          v-for="tab in tabs" 
+          :key="tab.id" 
+          :class="['nav-btn', { active: activeTab === tab.id }]"
+          @click="setActiveTab(tab.id)"
+        >
+          <span class="tab-icon">{{ tab.icon }}</span>
+          <span class="tab-name">{{ tab.name }}</span>
+        </button>
+      </div>
     </div>
 
+    <!-- Dashboard Content -->
     <div class="dashboard-content">
-      <!-- Overview Tab -->
-      <div v-if="activeTab === 'overview'" class="tab-content">
-        <AdminOverview :analytics="analytics" @refresh="loadAnalytics" />
-      </div>
+      <div class="content-wrapper">
+        <!-- Overview Tab -->
+        <div v-if="activeTab === 'overview'" class="tab-content" ref="overviewTab">
+          <div class="tab-header">
+            <h2>📊 Dashboard Overview</h2>
+            <p>Monitor your parking system performance and key metrics</p>
+          </div>
+          <AdminOverview :analytics="analytics" @refresh="loadAnalytics" />
+        </div>
 
-      <!-- Parking Lots Tab -->
-      <div v-if="activeTab === 'parking-lots'" class="tab-content">
-        <ParkingLotsManagement @refresh="loadParkingLots" />
-      </div>
+        <!-- Parking Lots Tab -->
+        <div v-if="activeTab === 'parking-lots'" class="tab-content" ref="parkingLotsTab">
+          <div class="tab-header">
+            <h2>🏢 Parking Lots Management</h2>
+            <p>Manage and configure your parking lot locations</p>
+          </div>
+          <ParkingLotsManagement @refresh="loadParkingLots" />
+        </div>
 
-      <!-- Parking Spots Tab -->
-      <div v-if="activeTab === 'parking-spots'" class="tab-content">
-        <ParkingSpotsView />
-      </div>
+        <!-- Parking Spots Tab -->
+        <div v-if="activeTab === 'parking-spots'" class="tab-content" ref="parkingSpotsTab">
+          <div class="tab-header">
+            <h2>🅿️ Parking Spots Overview</h2>
+            <p>Monitor individual parking spot status and availability</p>
+          </div>
+          <ParkingSpotsView />
+        </div>
 
-      <!-- Users Tab -->
-      <div v-if="activeTab === 'users'" class="tab-content">
-        <UsersManagement />
-      </div>
+        <!-- Users Tab -->
+        <div v-if="activeTab === 'users'" class="tab-content" ref="usersTab">
+          <div class="tab-header">
+            <h2>👥 User Management</h2>
+            <p>Manage user accounts and permissions</p>
+          </div>
+          <UsersManagement />
+        </div>
 
-      <!-- Reports Tab -->
-      <div v-if="activeTab === 'reports'" class="tab-content">
-        <ReportsView />
+        <!-- Reports Tab -->
+        <div v-if="activeTab === 'reports'" class="tab-content" ref="reportsTab">
+          <div class="tab-header">
+            <h2>📈 Analytics & Reports</h2>
+            <p>Generate insights and performance reports</p>
+          </div>
+          <ReportsView />
+        </div>
       </div>
     </div>
   </div>
@@ -65,12 +119,28 @@ const analytics = ref({});
 const loading = ref(true);
 
 const tabs = [
-  { id: 'overview', name: '📊 Overview' },
-  { id: 'parking-lots', name: '🏢 Parking Lots' },
-  { id: 'parking-spots', name: '🅿️ Parking Spots' },
-  { id: 'users', name: '👥 Users' },
-  { id: 'reports', name: '📈 Reports' }
+  { id: 'overview', name: 'Overview', icon: '📊' },
+  { id: 'parking-lots', name: 'Parking Lots', icon: '🏢' },
+  { id: 'parking-spots', name: 'Parking Spots', icon: '🅿️' },
+  { id: 'users', name: 'Users', icon: '👥' },
+  { id: 'reports', name: 'Reports', icon: '📈' }
 ];
+
+const setActiveTab = (tabId) => {
+  activeTab.value = tabId;
+  
+  // Add smooth transition animation
+  const content = document.querySelector('.tab-content');
+  if (content) {
+    content.style.opacity = '0';
+    content.style.transform = 'translateY(10px)';
+    
+    setTimeout(() => {
+      content.style.opacity = '1';
+      content.style.transform = 'translateY(0)';
+    }, 150);
+  }
+};
 
 const loadAnalytics = async () => {
   try {
@@ -124,106 +194,473 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.admin-dashboard {
-  min-height: 100vh;
-  width: 100%;
-  background-color: #f8f9fa;
-  margin: 0;
-  padding: 0;
+/* CSS Variables for consistent theming */
+:root {
+  --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --secondary-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  --accent-gradient: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  --admin-gradient: linear-gradient(135deg, #8B2BDA 0%, #6A1B9A 50%, #4A148C 100%);
+  --glass-bg: rgba(255, 255, 255, 0.1);
+  --glass-bg-strong: rgba(255, 255, 255, 0.25);
+  --glass-border: rgba(255, 255, 255, 0.2);
+  --shadow-soft: 0 8px 32px rgba(31, 38, 135, 0.15);
+  --shadow-hover: 0 15px 35px rgba(31, 38, 135, 0.25);
+  --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Global Dashboard Styles */
+.admin-dashboard {
+  min-height: 100vh;
+  background: var(--primary-gradient);
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Background Animation (same as login/home) */
+.background-animation {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.floating-shapes {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.shape {
+  position: absolute;
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
+  animation: float 8s ease-in-out infinite;
+}
+
+.shape-1 {
+  width: 70px;
+  height: 70px;
+  top: 10%;
+  left: 10%;
+  animation-delay: 0s;
+}
+
+.shape-2 {
+  width: 50px;
+  height: 50px;
+  top: 20%;
+  right: 20%;
+  animation-delay: 2s;
+}
+
+.shape-3 {
+  width: 90px;
+  height: 90px;
+  bottom: 20%;
+  left: 15%;
+  animation-delay: 4s;
+}
+
+.shape-4 {
+  width: 60px;
+  height: 60px;
+  top: 60%;
+  right: 10%;
+  animation-delay: 1s;
+}
+
+.shape-5 {
+  width: 80px;
+  height: 80px;
+  bottom: 10%;
+  right: 30%;
+  animation-delay: 3s;
+}
+
+.shape-6 {
+  width: 45px;
+  height: 45px;
+  top: 40%;
+  left: 5%;
+  animation-delay: 5s;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(30px, -30px) scale(1.1);
+  }
+  66% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
+}
+
+.gradient-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(40px);
+  animation: float 12s ease-in-out infinite;
+}
+
+.orb-1 {
+  width: 200px;
+  height: 200px;
+  background: radial-gradient(circle, rgba(102, 126, 234, 0.4) 0%, transparent 70%);
+  top: 20%;
+  left: 80%;
+  animation-delay: 0s;
+}
+
+.orb-2 {
+  width: 150px;
+  height: 150px;
+  background: radial-gradient(circle, rgba(118, 75, 162, 0.4) 0%, transparent 70%);
+  bottom: 30%;
+  left: 10%;
+  animation-delay: 4s;
+}
+
+.orb-3 {
+  width: 180px;
+  height: 180px;
+  background: radial-gradient(circle, rgba(79, 172, 254, 0.3) 0%, transparent 70%);
+  top: 60%;
+  right: 20%;
+  animation-delay: 8s;
+}
+
+/* Dashboard Header */
 .dashboard-header {
-  background-color: #2c3e50;
-  color: white;
-  padding: 1rem 2rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(25px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+  padding: 1.5rem 0;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.1);
+}
+
+.header-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 2rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.brand-section {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.logo-icon {
+  width: 50px;
+  height: 50px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 1.5rem;
+  font-weight: bold;
+  box-shadow: 0 12px 30px rgba(102, 126, 234, 0.4);
+  border: 2px solid rgba(255, 255, 255, 0.2);
 }
 
 .dashboard-header h1 {
   margin: 0;
-  font-size: 1.8rem;
+  font-size: 2rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #fff 0%, #e0e0e0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .admin-info {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 2rem;
+}
+
+.admin-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+.welcome-text {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.admin-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: white;
 }
 
 .logout-btn {
-  background-color: #e74c3c;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(15px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
+  padding: 0.75rem 1.5rem;
+  border-radius: 16px;
   cursor: pointer;
-  transition: background-color 0.3s;
+  transition: var(--transition-smooth);
+  font-weight: 500;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.1);
 }
 
 .logout-btn:hover {
-  background-color: #c0392b;
+  background: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.2);
 }
 
-.dashboard-nav {
-  background-color: white;
-  padding: 1rem 2rem;
-  border-bottom: 1px solid #e9ecef;
-  display: flex;
-  gap: 1rem;
-  overflow-x: auto;
-}
-
-.nav-btn {
-  background-color: transparent;
-  border: none;
-  padding: 0.75rem 1.5rem;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.3s;
-  white-space: nowrap;
+.logout-icon {
   font-size: 1rem;
 }
 
+/* Dashboard Navigation */
+.dashboard-nav {
+  position: sticky;
+  top: 88px;
+  z-index: 99;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 1rem 0;
+  box-shadow: 0 4px 20px rgba(102, 126, 234, 0.08);
+}
+
+.nav-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 2rem;
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.nav-container::-webkit-scrollbar {
+  display: none;
+}
+
+.nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(15px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.95);
+  padding: 0.875rem 1.5rem;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  white-space: nowrap;
+  font-weight: 500;
+  min-width: fit-content;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.08);
+}
+
 .nav-btn:hover {
-  background-color: #f8f9fa;
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.35);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.15);
 }
 
 .nav-btn.active {
-  background-color: #42b883;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-color: rgba(102, 126, 234, 0.6);
   color: white;
+  box-shadow: 0 12px 30px rgba(102, 126, 234, 0.4);
+  transform: translateY(-2px);
 }
 
+.tab-icon {
+  font-size: 1.1rem;
+}
+
+.tab-name {
+  font-size: 0.95rem;
+}
+
+/* Dashboard Content */
 .dashboard-content {
-  padding: 2rem;
+  position: relative;
+  z-index: 2;
+  padding: 2rem 0;
+  min-height: calc(100vh - 200px);
+}
+
+.content-wrapper {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 2rem;
 }
 
 .tab-content {
-  background-color: white;
-  border-radius: 8px;
-  padding: 2rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(30px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 24px;
+  padding: 2.5rem;
+  box-shadow: 0 20px 40px rgba(102, 126, 234, 0.15), 0 8px 32px rgba(118, 75, 162, 0.1);
+  transition: var(--transition-smooth);
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.tab-content:hover {
+  box-shadow: 0 25px 50px rgba(102, 126, 234, 0.25), 0 15px 35px rgba(118, 75, 162, 0.15);
+  border-color: rgba(255, 255, 255, 0.35);
+  transform: translateY(-5px);
+}
+
+.tab-header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.tab-header h2 {
+  font-size: 2rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 0.5rem;
+  text-shadow: 0 2px 10px rgba(102, 126, 234, 0.1);
+}
+
+.tab-header p {
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+}
+
+/* Responsive Design */
+@media (max-width: 1024px) {
+  .header-content,
+  .nav-container,
+  .content-wrapper {
+    padding: 0 1.5rem;
+  }
+  
+  .dashboard-header h1 {
+    font-size: 1.75rem;
+  }
+  
+  .tab-content {
+    padding: 2rem;
+  }
 }
 
 @media (max-width: 768px) {
-  .dashboard-header {
+  .header-content {
     flex-direction: column;
     gap: 1rem;
     text-align: center;
   }
   
-  .dashboard-nav {
-    padding: 1rem;
+  .admin-info {
+    flex-direction: column;
+    gap: 1rem;
+  }
+  
+  .admin-details {
+    align-items: center;
+  }
+  
+  .nav-container {
+    padding: 0 1rem;
+    gap: 0.75rem;
+  }
+  
+  .nav-btn {
+    padding: 0.75rem 1.25rem;
+    font-size: 0.9rem;
+  }
+  
+  .tab-icon {
+    font-size: 1rem;
   }
   
   .dashboard-content {
-    padding: 1rem;
+    padding: 1.5rem 0;
+  }
+  
+  .content-wrapper {
+    padding: 0 1rem;
   }
   
   .tab-content {
+    padding: 1.5rem;
+  }
+  
+  .tab-header h2 {
+    font-size: 1.75rem;
+  }
+  
+  .tab-header p {
+    font-size: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-header {
+    padding: 1rem 0;
+  }
+  
+  .dashboard-header h1 {
+    font-size: 1.5rem;
+  }
+  
+  .logo-icon {
+    width: 40px;
+    height: 40px;
+    font-size: 1.25rem;
+  }
+  
+  .nav-btn {
+    flex-direction: column;
+    gap: 0.5rem;
     padding: 1rem;
+    text-align: center;
+  }
+  
+  .tab-name {
+    font-size: 0.85rem;
+  }
+  
+  .tab-content {
+    padding: 1.25rem;
+  }
+  
+  .tab-header h2 {
+    font-size: 1.5rem;
   }
 }
 </style>

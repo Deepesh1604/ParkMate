@@ -184,8 +184,9 @@ onMounted(() => {
 
 .overview-header h2 {
   margin: 0;
-  color: #2c3e50;
+  color: white;
   font-size: 1.8rem;
+  font-weight: 600;
 }
 
 .refresh-btn {
@@ -308,8 +309,9 @@ onMounted(() => {
 
 .charts-section h3 {
   margin-bottom: 1rem;
-  color: #2c3e50;
+  color: white;
   font-size: 1.3rem;
+  font-weight: 600;
 }
 
 .activity-chart {
@@ -370,13 +372,13 @@ onMounted(() => {
 
 .no-activity h4 {
   margin: 0 0 0.5rem 0;
-  color: #6c757d;
+  color: rgba(255, 255, 255, 0.8);
   font-size: 1.2rem;
 }
 
 .no-activity p {
   margin: 0 0 1.5rem 0;
-  color: #95a5a6;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .find-parking-btn {
@@ -397,8 +399,9 @@ onMounted(() => {
 
 .quick-actions h3 {
   margin-bottom: 1.5rem;
-  color: #2c3e50;
+  color: white;
   font-size: 1.3rem;
+  font-weight: 600;
 }
 
 .action-buttons {

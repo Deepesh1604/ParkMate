@@ -475,7 +475,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .parking-history h2 {
   margin-bottom: 2rem;
-  color: #2c3e50;
+  color: white;
+  font-weight: 600;
 }
 
 .history-stats {
@@ -715,7 +716,8 @@ onBeforeUnmount(() => {
 
 .chart-section h3 {
   margin-bottom: 1rem;
-  color: #2c3e50;
+  color: white;
+  font-weight: 600;
 }
 
 .chart-container {

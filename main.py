@@ -9,6 +9,8 @@ import csv
 import io
 import os
 import base64
+import jwt
+import bcrypt
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -47,10 +49,42 @@ logger = logging.getLogger(__name__)
 
 # FLASK APPLICATION SETUP
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
+CORS(app, supports_credentials=True, origins=['http://localhost:5173', 'http://localhost:3000'])
 app.secret_key = 'parking_lot_secret_key_2024'
 
-# CONFIGURATION SETTINGS,  Email Configuration for MailHog
+# Security Headers Middleware
+@app.after_request
+def after_request(response):
+    """Add security headers to all responses"""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;"
+    
+    # Remove server header for security
+    response.headers.pop('Server', None)
+    
+    return response
+
+#JWT Configuration
+JWT_SECRET_KEY = 'parkmate_jwt_secret_key_2024_very_secure_key_change_in_production'
+JWT_ALGORITHM = 'HS256'
+JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
+JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
+
+#JWT Blacklist for logout functionality
+JWT_BLACKLIST = set()
+
+def add_token_to_blacklist(jti):
+    """Add token JTI to blacklist"""
+    JWT_BLACKLIST.add(jti)
+
+def is_token_blacklisted(jti):
+    """Check if token is blacklisted"""
+    return jti in JWT_BLACKLIST
+
+#CONFIGURATION SETTINGS,  Email Configuration for MailHog
 EMAIL_HOST = 'localhost'
 EMAIL_PORT = 1025
 EMAIL_USERNAME = 'admin@parkmate.com'
@@ -63,6 +97,53 @@ GOOGLE_CHAT_WEBHOOK = os.environ.get('GOOGLE_CHAT_WEBHOOK')
 # Cache Configuration
 CACHE_TIMEOUT = 300 
 ANALYTICS_CACHE_TIMEOUT = 900
+
+#Rate Limiting Configuration
+LOGIN_RATE_LIMIT = 5  # Max 5 attempts per minute
+REGISTER_RATE_LIMIT = 3  # Max 3 registrations per minute
+
+def rate_limit_key(endpoint, identifier):
+    """Generate rate limit key"""
+    return f"rate_limit:{endpoint}:{identifier}"
+
+def check_rate_limit(endpoint, identifier, limit_per_minute):
+    """Check if request is within rate limit"""
+    try:
+        key = rate_limit_key(endpoint, identifier)
+        current_count = redis_client.get(key)
+        
+        if current_count is None:
+
+            redis_client.setex(key, 60, 1) 
+            return True
+        
+        if int(current_count) >= limit_per_minute:
+            return False
+        
+        redis_client.incr(key)
+        return True
+        
+    except redis.RedisError as e:
+        logger.warning(f"Rate limiting error: {e}")
+        return True 
+
+def rate_limited(limit_per_minute):
+    """Decorator for rate limiting endpoints"""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            identifier = request.remote_addr or 'unknown'
+            endpoint = f.__name__
+            
+            if not check_rate_limit(endpoint, identifier, limit_per_minute):
+                return jsonify({
+                    'error': 'Rate limit exceeded. Please try again later.',
+                    'retry_after': 60
+                }), 429
+            
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
 
 # REDIS CONFIGURATION
 redis_client = redis.Redis(
@@ -290,6 +371,7 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
+    # Parking Reminders table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS parking_reminders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -301,6 +383,25 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
+    
+    # Payment Transactions table for payment gateway
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS payment_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reservation_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            payment_method TEXT NOT NULL,
+            payment_details TEXT NOT NULL,
+            amount REAL NOT NULL,
+            transaction_id TEXT UNIQUE NOT NULL,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            processed_at TIMESTAMP,
+            FOREIGN KEY (reservation_id) REFERENCES reservations (id),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+    
     # Create default admin user
     admin_password = hashlib.sha256('admin123'.encode()).hexdigest()
     cursor.execute('''
@@ -316,8 +417,238 @@ def get_db():
     return sqlite3.connect('parking_lot.db')
 
 def hash_password(password):
-    """Hash password using SHA256"""
-    return hashlib.sha256(password.encode()).hexdigest()
+    """Hash password using bcrypt (more secure than SHA256)"""
+    try:
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+        return hashed.decode('utf-8')
+    except:
+        return hashlib.sha256(password.encode()).hexdigest()
+
+def verify_password(password, hashed_password):
+    """Verify password against hash"""
+    try:
+        return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
+    except:
+        return hashlib.sha256(password.encode()).hexdigest() == hashed_password
+
+def generate_tokens(user_data):
+    """Generate JWT access and refresh tokens"""
+    try:
+        import uuid
+        
+        #generates unique JTI (JWT ID) for tken blacklisting
+        access_jti = str(uuid.uuid4())
+        refresh_jti = str(uuid.uuid4())
+  
+        access_payload = {
+            'user_id': user_data['id'],
+            'username': user_data['username'],
+            'email': user_data['email'],
+            'is_admin': user_data['is_admin'],
+            'exp': datetime.utcnow() + JWT_ACCESS_TOKEN_EXPIRES,
+            'iat': datetime.utcnow(),
+            'jti': access_jti,
+            'type': 'access'
+        }
+        
+        # refreshess token payload
+        refresh_payload = {
+            'user_id': user_data['id'],
+            'username': user_data['username'],
+            'exp': datetime.utcnow() + JWT_REFRESH_TOKEN_EXPIRES,
+            'iat': datetime.utcnow(),
+            'jti': refresh_jti,
+            'type': 'refresh'
+        }
+        
+        access_token = jwt.encode(access_payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+        refresh_token = jwt.encode(refresh_payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+        
+        return {
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'expires_in': int(JWT_ACCESS_TOKEN_EXPIRES.total_seconds()),
+            'token_type': 'Bearer'
+        }
+    except Exception as e:
+        logger.error(f"Error generating tokens: {e}")
+        return None
+
+def verify_token(token, token_type='access'):
+    """Verify JWT token and return user data"""
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        
+        # Check if token type matches
+        if payload.get('type') != token_type:
+            logger.warning(f"Token type mismatch: expected {token_type}, got {payload.get('type')}")
+            return None
+        
+        #Check if token is blacklisted
+        jti = payload.get('jti')
+        if jti and is_token_blacklisted(jti):
+            logger.warning(f"Blacklisted token attempt: {jti}")
+            return None
+        
+        # Checks expiration manually for better error handling
+        exp = payload.get('exp')
+        if exp and datetime.utcfromtimestamp(exp) < datetime.utcnow():
+            logger.warning("Token has expired")
+            return None
+            
+        return payload
+    except jwt.ExpiredSignatureError:
+        logger.warning("JWT token has expired")
+        return None
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"Invalid JWT token: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error verifying token: {e}")
+        return None
+
+# Authentication Decorators
+def token_required(f):
+    """Decorator to require valid JWT token"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            try:
+                token = auth_header.split(" ")[1] 
+            except IndexError:
+                return jsonify({'error': 'Invalid token format'}), 401
+        # Fallback to session-based auth if no token
+        if not token:
+            if not session.get('user_id'):
+                return jsonify({'error': 'Authentication required'}), 401
+            #Creates user data from session
+            request.current_user = {
+                'user_id': session.get('user_id'),
+                'is_admin': session.get('is_admin', False)
+            }
+            return f(*args, **kwargs)
+        
+        # Verifiess token
+        user_data = verify_token(token)
+        if not user_data:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        
+        request.current_user = user_data
+        return f(*args, **kwargs)
+    
+    return decorated
+
+def admin_required(f):
+    """Decorator to require admin privileges"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            try:
+                token = auth_header.split(" ")[1]
+            except IndexError:
+                return jsonify({'error': 'Invalid token format'}), 401
+        
+        if not token:
+            # Session-based check
+            if not session.get('user_id'):
+                return jsonify({'error': 'Authentication required'}), 401
+            if not session.get('is_admin'):
+                return jsonify({'error': 'Admin access required'}), 403
+            request.current_user = {
+                'user_id': session.get('user_id'),
+                'is_admin': True
+            }
+            return f(*args, **kwargs)
+        
+        # Token-based check
+        user_data = verify_token(token)
+        if not user_data:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        
+        if not user_data.get('is_admin'):
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        request.current_user = user_data
+        return f(*args, **kwargs)
+    
+    return decorated
+
+def user_required(f):
+    """Decorator to require regular user privileges (non-admin)"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            try:
+                token = auth_header.split(" ")[1]
+            except IndexError:
+                return jsonify({'error': 'Invalid token format'}), 401
+        
+        if not token:
+           
+            if not session.get('user_id'):
+                return jsonify({'error': 'Authentication required'}), 401
+            if session.get('is_admin'):
+                return jsonify({'error': 'User access only'}), 403
+            request.current_user = {
+                'user_id': session.get('user_id'),
+                'is_admin': False
+            }
+            return f(*args, **kwargs)
+        
+        user_data = verify_token(token)
+        if not user_data:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        
+        if user_data.get('is_admin'):
+            return jsonify({'error': 'User access only'}), 403
+        
+        request.current_user = user_data
+        return f(*args, **kwargs)
+    
+    return decorated
+
+def login_required(f):
+    """Decorator to require authentication (allows both users and admins)"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            try:
+                token = auth_header.split(" ")[1]
+            except IndexError:
+                return jsonify({'error': 'Invalid token format'}), 401
+        
+        if not token:
+           
+            if not session.get('user_id'):
+                return jsonify({'error': 'Authentication required'}), 401
+            request.current_user = {
+                'user_id': session.get('user_id'),
+                'is_admin': session.get('is_admin', False)
+            }
+
+            return f(*args, **kwargs)
+        
+        user_data = verify_token(token)
+        if not user_data:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        
+        request.current_user = user_data
+        return f(*args, **kwargs)
+    
+    return decorated
 
 def dict_factory(cursor, row):
     """Convert sqlite row to dictionary"""
@@ -332,14 +663,12 @@ def ensure_database_consistency():
         conn = get_db()
         cursor = conn.cursor()
         
-        #orphaned reservations
         cursor.execute("""
             DELETE FROM reservations 
             WHERE user_id NOT IN (SELECT id FROM users)
         """)
         orphaned_count = cursor.rowcount
         
-        #inconsistent spot statuses
         cursor.execute("""
             UPDATE parking_spots 
             SET status = 'A' 
@@ -708,7 +1037,7 @@ def send_daily_reminders(self):
         inactive_users = []
         sent_count = 0
         
-        # Find users who haven't made reservations in the last 7 days
+        # Find users who haven'ot made reservations in the last 7 days
         for user in users:
             cursor.execute('''
                 SELECT COUNT(*) as recent_count
@@ -721,12 +1050,12 @@ def send_daily_reminders(self):
             if recent_reservations == 0:
                 inactive_users.append(user)
         
-        # For testing: if no inactive users
+        # Ftesting: if no inactive users
         if len(inactive_users) == 0 and len(users) > 0:
             inactive_users = users[:3]  # Take first 3 users for testing
             logger.info(f"No inactive users found, using first {len(inactive_users)} users for testing")
         
-        # Get available parking lots
+        # gets available parking lots
         cursor.execute('''
             SELECT 
                 pl.id, pl.prime_location_name as location_name, 
@@ -819,7 +1148,7 @@ def send_daily_reminders(self):
             
             today_bookings = cursor.fetchone()['today_count']
             
-            # Only to users who haven't booked today, if today_bookings == 0 and available_lots:
+            # only to users who haven't booked today, if today_bookings == 0 and available_lots:
             if available_lots:  # for testing
                 subject = "New Parking Opportunities Available! 🅿️"
                 
@@ -1308,7 +1637,7 @@ def send_parking_reminders(self):
         conn.row_factory = dict_factory
         cursor = conn.cursor()
         
-        #finds reservations that are active but user hasn't parked yet, send reminder after 30 minutes of booking
+        #finds reservationms that are active but user hasn't parked yet, send reminder after 30 minutes of boking
         reminder_time = datetime.now() - timedelta(minutes=30)
         
         cursor.execute('''
@@ -1338,7 +1667,6 @@ def send_parking_reminders(self):
         
         for reservation in pending_reservations:
             try:
-                # check if we already sent a reminder for this reservation
                 cursor.execute('''
                     SELECT id FROM parking_reminders 
                     WHERE reservation_id = ? AND reminder_type = 'parking_pending'
@@ -1346,7 +1674,6 @@ def send_parking_reminders(self):
                 
                 if cursor.fetchone():
                     continue
-                
                 #calculate time since booking
                 booking_time = datetime.fromisoformat(reservation['created_at'])
                 time_elapsed = datetime.now() - booking_time
@@ -1464,8 +1791,93 @@ def send_parking_reminders(self):
         logger.error(f"Error in send_parking_reminders: {e}")
         raise
 
+# HEALTH CHECK AND SECURITY STATUS ENDPOINTS
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint with security status"""
+    try:
+        # Check database connection
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT 1')
+        db_status = "OK"
+        conn.close()
+    except Exception:
+        db_status = "ERROR"
+    
+    # Check Redis connection
+    try:
+        redis_client.ping()
+        redis_status = "OK"
+    except Exception:
+        redis_status = "ERROR"
+    
+    # Check MailHog status
+    mailhog_status = "OK" if check_mailhog_status() else "ERROR"
+    
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'services': {
+            'database': db_status,
+            'redis': redis_status,
+            'mailhog': mailhog_status
+        },
+        'security': {
+            'jwt_enabled': True,
+            'rate_limiting_enabled': True,
+            'bcrypt_enabled': True,
+            'cors_enabled': True,
+            'security_headers': True,
+            'blacklisted_tokens': len(JWT_BLACKLIST)
+        },
+        'version': '1.0.0'
+    }), 200
+
+@app.route('/api/security/token-info', methods=['GET'])
+@token_required
+def token_info():
+    """Get information about the current JWT token"""
+    try:
+        user_data = request.current_user
+
+        auth_header = request.headers.get('Authorization', '')
+        token = auth_header.replace('Bearer ', '') if 'Bearer ' in auth_header else None
+        
+        if not token:
+            return jsonify({'error': 'No JWT token provided'}), 400
+        
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        
+        return jsonify({
+            'token_info': {
+                'user_id': payload.get('user_id'),
+                'username': payload.get('username'),
+                'email': payload.get('email'),
+                'is_admin': payload.get('is_admin'),
+                'token_type': payload.get('type'),
+                'issued_at': datetime.utcfromtimestamp(payload.get('iat')).isoformat() if payload.get('iat') else None,
+                'expires_at': datetime.utcfromtimestamp(payload.get('exp')).isoformat() if payload.get('exp') else None,
+                'jti': payload.get('jti'),
+                'algorithm': JWT_ALGORITHM
+            },
+            'security': {
+                'is_blacklisted': is_token_blacklisted(payload.get('jti', '')),
+                'time_to_expiry': int((datetime.utcfromtimestamp(payload.get('exp')) - datetime.utcnow()).total_seconds()) if payload.get('exp') else None
+            }
+        }), 200
+        
+    except jwt.ExpiredSignatureError:
+        return jsonify({'error': 'Token has expired'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'error': 'Invalid token'}), 401
+    except Exception as e:
+        logger.error(f"Error getting token info: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 # AUTHENTICATION API ENDPOINTS
 @app.route('/api/register', methods=['POST'])
+@rate_limited(REGISTER_RATE_LIMIT)
 def register():
     """User registration endpoint"""
     try:
@@ -1477,6 +1889,30 @@ def register():
         
         if not username or not password or not email:
             return jsonify({'error': 'Username, password, and email are required'}), 400
+        
+        if len(username) != 5:
+            return jsonify({'error': 'Username must be exactly 5 characters long'}), 400
+        
+        if not username.isalnum():
+            return jsonify({'error': 'Username must contain only alphanumeric characters (letters and numbers)'}), 400
+        
+        import re
+        email_pattern = r'^[a-zA-Z]+@gmail\.com$'
+        if not re.match(email_pattern, email):
+            return jsonify({'error': 'Email must be in format: alphabets@gmail.com (only Gmail addresses allowed)'}), 400
+        
+        if len(password) < 8:
+            return jsonify({'error': 'Password must be at least 8 characters long'}), 400
+        
+        if not password.isalnum():
+            return jsonify({'error': 'Password must contain only alphanumeric characters (letters and numbers)'}), 400
+        
+        if phone:  
+            if not phone.isdigit():
+                return jsonify({'error': 'Phone number must contain only numeric digits'}), 400
+            
+            if len(phone) != 10:
+                return jsonify({'error': 'Phone number must be exactly 10 digits long'}), 400
         
         conn = get_db()
         cursor = conn.cursor()
@@ -1536,6 +1972,7 @@ def register():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/login', methods=['POST'])
+@rate_limited(LOGIN_RATE_LIMIT)
 def login():
     """User login endpoint"""
     try:
@@ -1552,37 +1989,193 @@ def login():
         
         hashed_password = hash_password(password)
         cursor.execute('''
-            SELECT id, username, email, phone, is_admin 
-            FROM users WHERE username = ? AND password = ?
-        ''', (username, hashed_password))
+            SELECT id, username, email, phone, is_admin, password 
+            FROM users WHERE username = ?
+        ''', (username,))
         
         user = cursor.fetchone()
         conn.close()
         
-        if not user:
-            return jsonify({'error': 'Invalid credentials'}), 401       
+        if not user or not verify_password(password, user['password']):
+            return jsonify({'error': 'Invalid credentials'}), 401
+        
+        # Remove password from user data before generatin tokens
+        user_data = {
+            'id': user['id'],
+            'username': user['username'],
+            'email': user['email'],
+            'phone': user['phone'],
+            'is_admin': user['is_admin']
+        }
+        
+        # Generate JWT tokens (JT-only authentication)
+        tokens = generate_tokens(user_data)
+        
+        if not tokens:
+            return jsonify({'error': 'Failed to generate authentication tokens'}), 500
+        
+        # Set session variables for backward compatibility with frontend
         session['user_id'] = user['id']
-        session['is_admin'] = user['is_admin']
-        return jsonify({
+        session['username'] = user['username']
+        session['is_admin'] = bool(user['is_admin'])
+        session.permanent = True
+        
+        response_data = {
             'message': 'Login successful',
-            'user': user
-        }), 200
+            'user': user_data,
+            'access_token': tokens['access_token'],
+            'refresh_token': tokens['refresh_token'],
+            'expires_in': tokens['expires_in']
+        }
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
-    """User logout endpoint"""
-    session.clear()
-    return jsonify({'message': 'Logged out successfully'}), 200
+    """User logout endpoint - supports both session and JWT logout"""
+    try:
+        # Check for JWT token in header
+        token = None
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            try:
+                token = auth_header.split(" ")[1]
+            except IndexError:
+                pass
+        
+        if token:
+            # JWT-based logout - add token to blacklist
+            user_data = verify_token(token)
+            if user_data and user_data.get('jti'):
+                add_token_to_blacklist(user_data['jti'])
+                logger.info(f"JWT token blacklisted for user: {user_data.get('username')}")
+            
+            data = request.get_json() or {}
+            refresh_token = data.get('refresh_token')
+            if refresh_token:
+                refresh_data = verify_token(refresh_token, 'refresh')
+                if refresh_data and refresh_data.get('jti'):
+                    add_token_to_blacklist(refresh_data['jti'])
+                    logger.info(f"Refresh token blacklisted for user: {refresh_data.get('username')}")
+        
+        # Session-based logout
+        if session.get('user_id'):
+            logger.info(f"Session logout for user ID: {session.get('user_id')}")
+        
+        session.clear()
+        
+        return jsonify({
+            'message': 'Logged out successfully',
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error during logout: {e}")
+        
+        session.clear()
+        return jsonify({'message': 'Logged out successfully'}), 200
+
+@app.route('/api/refresh-token', methods=['POST'])
+@rate_limited(LOGIN_RATE_LIMIT)  # Same rate limit as login
+def refresh_token():
+    """Refresh JWT token endpoint"""
+    try:
+        data = request.json
+        refresh_token = data.get('refresh_token')
+        
+        if not refresh_token:
+            return jsonify({'error': 'Refresh token required'}), 400
+        
+        # Verify refresh token
+        user_data = verify_token(refresh_token, 'refresh')
+        if not user_data:
+            return jsonify({'error': 'Invalid or expired refresh token'}), 401
+        
+        # Check if refresh token is blacklisted
+        if user_data.get('jti') and is_token_blacklisted(user_data.get('jti')):
+            return jsonify({'error': 'Refresh token has been revoked'}), 401
+        
+        # Getupdated user data from database
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, username, email, phone, is_admin 
+            FROM users WHERE id = ?
+        ''', (user_data['user_id'],))
+        
+        current_user = cursor.fetchone()
+        conn.close()
+        
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Blacklist the old refresh token
+        if user_data.get('jti'):
+            add_token_to_blacklist(user_data.get('jti'))
+            logger.info(f"Old refresh token blacklisted for user: {current_user['username']}")
+        
+        # Generate new tokens
+        tokens = generate_tokens(current_user)
+        if not tokens:
+            return jsonify({'error': 'Failed to generate tokens'}), 500
+        
+        return jsonify({
+            'message': 'Token refreshed successfully',
+            'access_token': tokens['access_token'],
+            'refresh_token': tokens['refresh_token'],
+            'expires_in': tokens['expires_in'],
+            'token_type': tokens['token_type'],
+            'user': {
+                'id': current_user['id'],
+                'username': current_user['username'],
+                'email': current_user['email'],
+                'is_admin': current_user['is_admin']
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error refreshing token: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/verify-token', methods=['POST'])
+def verify_token_endpoint():
+    """Verify JWT token endpoint"""
+    try:
+        data = request.json
+        token = data.get('access_token')
+        
+        if not token:
+            return jsonify({'error': 'Access token required'}), 400
+        
+        user_data = verify_token(token, 'access')
+        if not user_data:
+            return jsonify({'error': 'Invalid or expired token', 'valid': False}), 401
+        
+        return jsonify({
+            'message': 'Token is valid',
+            'valid': True,
+            'user': {
+                'user_id': user_data['user_id'],
+                'username': user_data['username'],
+                'email': user_data['email'],
+                'is_admin': user_data['is_admin']
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error verifying token: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 # ADMIN API ENDPOINTS
 @app.route('/api/admin/parking-lots', methods=['GET', 'POST'])
+@admin_required
 def admin_parking_lots():
     """Admin parking lots management endpoint"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     conn = get_db()
     conn.row_factory = dict_factory
@@ -1634,7 +2227,7 @@ def admin_parking_lots():
             
             conn.commit()
             
-            cursor.execute('SELECT username, email FROM users WHERE id = ? AND is_admin = 1', (session['user_id'],))
+            cursor.execute('SELECT username, email FROM users WHERE id = ? AND is_admin = 1', (request.current_user['user_id'],))
             admin_details = cursor.fetchone()
             
             conn.close()
@@ -1721,10 +2314,9 @@ def admin_parking_lots():
             return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/parking-lots/<int:lot_id>', methods=['PUT'])
+@admin_required
 def update_parking_lot(lot_id):
     """Update parking lot endpoint"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         data = request.json
@@ -1789,10 +2381,9 @@ def update_parking_lot(lot_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/parking-lots/<int:lot_id>', methods=['DELETE'])
+@admin_required
 def delete_parking_lot(lot_id):
     """Delete parking lot endpoint"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         conn = get_db()
@@ -1838,10 +2429,9 @@ def delete_parking_lot(lot_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/parking-spots', methods=['GET'])
+@admin_required
 def admin_parking_spots():
     """Admin parking spots endpoint"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         lot_id = request.args.get('lot_id')
@@ -1925,10 +2515,9 @@ def admin_parking_spots():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/admin/parking-spots/<int:spot_id>/free', methods=['PATCH'])
+@admin_required
 def free_parking_spot(spot_id):
     """Free parking spot endpoint"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         conn = get_db()
@@ -1960,10 +2549,9 @@ def free_parking_spot(spot_id):
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/admin/users', methods=['GET'])
+@admin_required
 def admin_users():
     """Admin users management endpoint"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     @cached(timeout=CACHE_TIMEOUT, key_prefix='admin:users')
     def get_users_with_stats():
@@ -1997,10 +2585,9 @@ def admin_users():
     return jsonify({'users': users}), 200
 
 @app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
+@admin_required
 def delete_user(user_id):
     """Delete user endpoint"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         conn = get_db()
@@ -2048,10 +2635,9 @@ def delete_user(user_id):
         return jsonify({'error': 'Failed to delete user'}), 500
 
 @app.route('/api/admin/analytics', methods=['GET'])
+@admin_required
 def admin_analytics():
     """Admin analytics endpoint"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         conn = get_db()
@@ -2115,10 +2701,9 @@ def admin_analytics():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/admin/analytics/dashboard-data', methods=['GET'])
+@admin_required
 def admin_analytics_dashboard_data():
     """Admin analytics dashboard data endpoint - provides data structure expected by frontend"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         conn = get_db()
@@ -2330,10 +2915,9 @@ def admin_analytics_dashboard_data():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/admin/analytics/export-csv', methods=['POST'])
+@admin_required
 def admin_analytics_export_csv():
     """Export analytics data as CSV"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         data = request.json
@@ -2450,10 +3034,9 @@ def admin_analytics_export_csv():
 
 # GRAPH GENERATION API ENDPOINTS
 @app.route('/api/admin/graphs/occupancy', methods=['GET'])
+@admin_required
 def generate_occupancy_graph():
     """Generate occupancy analytics graph"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         conn = get_db()
@@ -2550,10 +3133,9 @@ def generate_occupancy_graph():
         return jsonify({'error': 'Failed to generate graph'}), 500
 
 @app.route('/api/admin/graphs/revenue', methods=['GET'])
+@admin_required
 def generate_revenue_graph():
     """Generate revenue analytics graph"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         conn = get_db()
@@ -2655,10 +3237,9 @@ def generate_revenue_graph():
 
 # USER API ENDPOINTS
 @app.route('/api/user/parking-lots', methods=['GET'])
+@login_required
 def user_parking_lots():
     """Get available parking lots for users"""
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
     
     @cached(timeout=CACHE_TIMEOUT, key_prefix='user')
     def get_user_parking_lots():
@@ -2686,10 +3267,9 @@ def user_parking_lots():
     return jsonify({'parking_lots': lots}), 200
 
 @app.route('/api/user/reserve-spot', methods=['POST'])
+@login_required
 def user_reserve_spot():
     """Reserve a parking spot"""
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
     
     try:
         data = request.json
@@ -2709,7 +3289,7 @@ def user_reserve_spot():
                 SELECT r.id FROM reservations r
                 JOIN parking_spots ps ON r.spot_id = ps.id
                 WHERE r.user_id = ? AND r.status = 'active'
-            ''', (session['user_id'],))
+            ''', (request.current_user['user_id'],))
             
             if cursor.fetchone():
                 cursor.execute('ROLLBACK')
@@ -2731,7 +3311,7 @@ def user_reserve_spot():
             cursor.execute('''
                 INSERT INTO reservations (spot_id, user_id, status)
                 VALUES (?, ?, 'active')
-            ''', (spot['id'], session['user_id']))
+            ''', (spot['id'], request.current_user['user_id']))
             
             reservation_id = cursor.lastrowid
             
@@ -2753,7 +3333,7 @@ def user_reserve_spot():
             
             reservation = cursor.fetchone()
             
-            cursor.execute('SELECT username, email FROM users WHERE id = ?', (session['user_id'],))
+            cursor.execute('SELECT username, email FROM users WHERE id = ?', (request.current_user['user_id'],))
             user_details = cursor.fetchone()
             
             conn.close()
@@ -2800,7 +3380,7 @@ def user_reserve_spot():
             
             robust_cache_invalidation()
             
-            logger.info(f"User {session['user_id']} reserved spot {reservation['spot_number']} at {reservation['prime_location_name']}")
+            logger.info(f"User {request.current_user['user_id']} reserved spot {reservation['spot_number']} at {reservation['prime_location_name']}")
             
             return jsonify({
                 'message': 'Spot reserved successfully',
@@ -2816,10 +3396,9 @@ def user_reserve_spot():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/user/park-vehicle', methods=['POST'])
+@login_required
 def user_park_vehicle():
     """Start parking session"""
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
     
     try:
         data = request.json
@@ -2832,12 +3411,12 @@ def user_park_vehicle():
         conn.row_factory = dict_factory
         cursor = conn.cursor()
         
-        parking_time = datetime.now()
+        parking_time =datetime.now()
         cursor.execute('''
             UPDATE reservations 
             SET parking_timestamp = ? 
             WHERE id = ? AND user_id = ? AND status = 'active'
-        ''', (parking_time, reservation_id, session['user_id']))
+        ''', (parking_time, reservation_id, request.current_user['user_id']))
         
         if cursor.rowcount == 0:
             conn.close()
@@ -2846,7 +3425,7 @@ def user_park_vehicle():
         conn.commit()
         conn.close()
         
-        invalidate_cache_pattern(f'*user:{session["user_id"]}*')
+        invalidate_cache_pattern(f'*user:{request.current_user["user_id"]}*')
         
         return jsonify({
             'message': 'Vehicle parked successfully',
@@ -2857,10 +3436,286 @@ def user_park_vehicle():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/user/release-spot', methods=['POST'])
+@login_required
 def user_release_spot():
-    """Release parking spot and complete session"""
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
+    """Release parking spot and complete session with payment"""
+    
+    try:
+        data = request.json
+        reservation_id = data.get('reservation_id')
+        payment_method = data.get('payment_method')  # 'upi' or 'card'
+        payment_details = data.get('payment_details')  # UPI ID or card details
+        
+        if not reservation_id:
+            return jsonify({'error': 'Reservation ID is required'}), 400
+            
+        if not payment_method or payment_method not in ['upi', 'card']:
+            return jsonify({'error': 'Valid payment method (upi/card) is required'}), 400
+            
+        if not payment_details:
+            return jsonify({'error': 'Payment details are required'}), 400
+        
+        # Validate payment details based on method
+        if payment_method == 'upi':
+            upi_id = payment_details.get('upi_id')
+            if not upi_id or '@' not in upi_id:
+                return jsonify({'error': 'Valid UPI ID is required'}), 400
+        elif payment_method == 'card':
+            card_details = payment_details
+            required_fields = ['card_number', 'expiry_month', 'expiry_year', 'cvv', 'cardholder_name']
+            for field in required_fields:
+                if not card_details.get(field):
+                    return jsonify({'error': f'{field.replace("_", " ").title()} is required'}), 400
+            
+            # Basic card validation
+            card_number = card_details['card_number'].replace(' ', '').replace('-', '')
+            if not card_number.isdigit() or len(card_number) != 16:
+                return jsonify({'error': 'Card number must be 16 digits'}), 400
+                
+            if not card_details['cvv'].isdigit() or len(card_details['cvv']) != 3:
+                return jsonify({'error': 'CVV must be 3 digits'}), 400
+                
+            try:
+                expiry_month = int(card_details['expiry_month'])
+                expiry_year = int(card_details['expiry_year'])
+                if expiry_month < 1 or expiry_month > 12:
+                    return jsonify({'error': 'Invalid expiry month'}), 400
+                if expiry_year < datetime.now().year:
+                    return jsonify({'error': 'Card has expired'}), 400
+            except ValueError:
+                return jsonify({'error': 'Invalid expiry date'}), 400
+        
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        cursor.execute('BEGIN IMMEDIATE')
+        
+        try:
+            cursor.execute('''
+                SELECT 
+                    r.*,
+                    ps.spot_number,
+                    pl.price,
+                    pl.prime_location_name,
+                    pl.address
+                FROM reservations r
+                JOIN parking_spots ps ON r.spot_id = ps.id
+                JOIN parking_lots pl ON ps.lot_id = pl.id
+                WHERE r.id = ? AND r.user_id = ? AND r.status = 'active'
+            ''', (reservation_id, request.current_user['user_id']))
+            
+            reservation = cursor.fetchone()
+            if not reservation:
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'Invalid reservation'}), 400
+            
+            if not reservation['parking_timestamp']:
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'Vehicle not yet parked'}), 400
+            
+            leaving_time = datetime.now()
+            parking_start = datetime.fromisoformat(reservation['parking_timestamp'])
+            duration_hours = max(1, (leaving_time - parking_start).total_seconds() / 3600)
+            parking_cost = duration_hours * reservation['price']
+            
+            # Create payment transaction
+            import uuid
+            transaction_id = f"PAY_{uuid.uuid4().hex[:12].upper()}"
+            
+            # Store payment details securely (in real world, encrypt sensitive data)
+            if payment_method == 'upi':
+                payment_details_json = json.dumps({
+                    'upi_id': payment_details['upi_id'],
+                    'method': 'upi'
+                })
+            else:  # card
+                # In production, never store full card details
+                payment_details_json = json.dumps({
+                    'method': 'card',
+                    'last_4_digits': card_number[-4:],
+                    'cardholder_name': card_details['cardholder_name'],
+                    'expiry': f"{card_details['expiry_month']}/{card_details['expiry_year']}"
+                })
+            
+            # Simulate payment processing
+            import random
+            time.sleep(1)  # Simulate processing time
+            
+            # 95% success rate for demo
+            payment_success = random.random() < 0.95
+            
+            cursor.execute('''
+                INSERT INTO payment_transactions 
+                (reservation_id, user_id, payment_method, payment_details, amount, transaction_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                reservation_id,
+                request.current_user['user_id'], 
+                payment_method, 
+                payment_details_json, 
+                parking_cost, 
+                transaction_id,
+                'completed' if payment_success else 'failed'
+            ))
+            
+            if not payment_success:
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({
+                    'error': 'Payment failed. Please try again.',
+                    'transaction_id': transaction_id,
+                    'amount': round(parking_cost, 2)
+                }), 400
+            
+            cursor.execute('''
+                UPDATE reservations 
+                SET leaving_timestamp = ?, parking_cost = ?, status = 'completed'
+                WHERE id = ?
+            ''', (leaving_time, parking_cost, reservation_id))
+            
+            cursor.execute('UPDATE parking_spots SET status = "A" WHERE id = ?', (reservation['spot_id'],))
+            
+            # Update payment transaction with processed timestamp
+            cursor.execute('''
+                UPDATE payment_transactions 
+                SET processed_at = CURRENT_TIMESTAMP
+                WHERE transaction_id = ?
+            ''', (transaction_id,))
+            
+            #gets user details for email notification before committing
+            cursor.execute('SELECT email, username FROM users WHERE id = ?', (request.current_user['user_id'],))
+            user_details = cursor.fetchone()
+            
+            cursor.execute('COMMIT')
+            
+            conn.close()
+            
+            robust_cache_invalidation()
+            
+            #sends release confirmation email with payment details
+            if user_details:
+                payment_method_display = "UPI Payment" if payment_method == 'upi' else "Card Payment"
+                payment_info = payment_details['upi_id'] if payment_method == 'upi' else f"**** **** **** {card_number[-4:]}"
+                
+                release_email_body = f"""
+                <html>
+                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <div style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                            <h1 style="margin: 0; font-size: 28px;">✅ Payment Successful!</h1>
+                        </div>
+                        
+                        <div style="background: white; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 10px 10px;">
+                            <h2 style="color: #4CAF50; margin-top: 0;">Hello {user_details['username']}!</h2>
+                            
+                            <p>Thank you! Your payment has been processed successfully and your parking session is now complete.</p>
+                            
+                            <div style="background: #e8f5e9; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #4CAF50;">
+                                <h3 style="color: #2e7d32; margin-top: 0;">💳 Payment Details</h3>
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <tr style="border-bottom: 1px solid #c8e6c9;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Transaction ID:</td>
+                                        <td style="padding: 8px 0; color: #2e7d32; font-weight: bold;">{transaction_id}</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #c8e6c9;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Payment Method:</td>
+                                        <td style="padding: 8px 0;">{payment_method_display}</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #c8e6c9;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Payment Info:</td>
+                                        <td style="padding: 8px 0;">{payment_info}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 8px 0; font-weight: bold;">Amount Paid:</td>
+                                        <td style="padding: 8px 0; color: #2e7d32; font-weight: bold; font-size: 18px;">${round(parking_cost, 2)}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                            
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                                <h3 style="color: #495057; margin-top: 0;">🅿️ Parking Session Summary</h3>
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <tr style="border-bottom: 1px solid #dee2e6;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Parking Spot:</td>
+                                        <td style="padding: 8px 0;">#{reservation['spot_number']}</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #dee2e6;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Location:</td>
+                                        <td style="padding: 8px 0;">{reservation.get('prime_location_name', 'N/A')}</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #dee2e6;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Parked At:</td>
+                                        <td style="padding: 8px 0;">{parking_start.strftime('%Y-%m-%d %H:%M:%S')}</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #dee2e6;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Left At:</td>
+                                        <td style="padding: 8px 0;">{leaving_time.strftime('%Y-%m-%d %H:%M:%S')}</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #dee2e6;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Duration:</td>
+                                        <td style="padding: 8px 0;">{round(duration_hours, 2)} hours</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 8px 0; font-weight: bold;">Rate:</td>
+                                        <td style="padding: 8px 0;">${reservation['price']}/hour</td>
+                                    </tr>
+                                </table>
+                            </div>
+                            
+                            <div style="text-align: center; margin-top: 30px;">
+                                <p style="color: #4CAF50; font-weight: bold; font-size: 16px;">
+                                    Payment completed successfully! Thank you for using ParkMate! 🚗
+                                </p>
+                                <p style="color: #6c757d; font-size: 14px;">
+                                    Keep this email as your receipt.<br>
+                                    <strong>The ParkMate Team</strong>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """
+                
+                #send the email asynchronously
+                try:
+                    send_email(user_details['email'], f"Payment Receipt - Spot #{reservation['spot_number']} (${round(parking_cost, 2)})", release_email_body)
+                    logger.info(f"Payment receipt email sent to {user_details['email']}")
+                except Exception as email_error:
+                    logger.error(f"Failed to send payment receipt email: {email_error}")
+            
+            logger.info(f"User {request.current_user['user_id']} released spot {reservation['spot_number']}, paid: ${round(parking_cost, 2)} - Transaction: {transaction_id}")
+            
+            return jsonify({
+                'message': 'Payment successful! Spot released.',
+                'leaving_timestamp': leaving_time.isoformat(),
+                'parking_cost': round(parking_cost, 2),
+                'duration_hours': round(duration_hours, 2),
+                'payment': {
+                    'transaction_id': transaction_id,
+                    'amount': round(parking_cost, 2),
+                    'method': payment_method,
+                    'status': 'completed'
+                }
+            }), 200
+            
+        except Exception as e:
+            cursor.execute('ROLLBACK')
+            conn.close()
+            raise e
+            
+    except Exception as e:
+        logger.error(f"Error in user_release_spot with payment: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Legacy release endpoint without payment (for backward compatibility)
+@app.route('/api/user/release-spot-legacy', methods=['POST'])
+@login_required
+def user_release_spot_legacy():
+    """Release parking spot and complete session (Legacy - No Payment)"""
     
     try:
         data = request.json
@@ -2887,7 +3742,7 @@ def user_release_spot():
                 JOIN parking_spots ps ON r.spot_id = ps.id
                 JOIN parking_lots pl ON ps.lot_id = pl.id
                 WHERE r.id = ? AND r.user_id = ? AND r.status = 'active'
-            ''', (reservation_id, session['user_id']))
+            ''', (reservation_id, request.current_user['user_id']))
             
             reservation = cursor.fetchone()
             if not reservation:
@@ -2913,66 +3768,230 @@ def user_release_spot():
             
             cursor.execute('UPDATE parking_spots SET status = "A" WHERE id = ?', (reservation['spot_id'],))
             
-            #gets user details for email notification before committing
-            cursor.execute('SELECT email, username FROM users WHERE id = ?', (session['user_id'],))
-            user_details = cursor.fetchone()
-            
             cursor.execute('COMMIT')
             
             conn.close()
             
             robust_cache_invalidation()
             
-            #sends release confirmation email
-            if user_details:
-                release_email_body = f"""
+            logger.info(f"User {request.current_user['user_id']} released spot {reservation['spot_number']} (legacy), cost: ${round(parking_cost, 2)}")
+            
+            return jsonify({
+                'message': 'Spot released successfully (Legacy)',
+                'leaving_timestamp': leaving_time.isoformat(),
+                'parking_cost': round(parking_cost, 2),
+                'duration_hours': round(duration_hours, 2)
+            }), 200
+            
+        except Exception as e:
+            cursor.execute('ROLLBACK')
+            raise e
+            
+    except Exception as e:
+        logger.error(f"Error in user_release_spot_legacy: {e}")
+        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error releasing spot: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/user/parking-lots/<int:lot_id>/slots', methods=['GET'])
+@login_required
+def user_get_available_slots(lot_id):
+    """Get available parking slots for a specific lot"""
+    
+    try:
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        # Verify the parking lot exists
+        cursor.execute('SELECT id, prime_location_name FROM parking_lots WHERE id = ?', (lot_id,))
+        lot = cursor.fetchone()
+        
+        if not lot:
+            conn.close()
+            return jsonify({'error': 'Parking lot not found'}), 404
+        
+        # Get all available slots for this lot
+        cursor.execute('''
+            SELECT 
+                id,
+                spot_number,
+                status
+            FROM parking_spots 
+            WHERE lot_id = ? AND status = 'A'
+            ORDER BY spot_number
+        ''', (lot_id,))
+        
+        available_slots = cursor.fetchall()
+        conn.close()
+        
+        logger.info(f"Retrieved {len(available_slots)} available slots for lot {lot_id}")
+        
+        return jsonify({
+            'lot_id': lot_id,
+            'lot_name': lot['prime_location_name'],
+            'available_slots': available_slots
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching available slots for lot {lot_id}: {e}")
+        return jsonify({'error': 'Failed to fetch available slots'}), 500
+
+@app.route('/api/user/reserve-specific-spot', methods=['POST'])
+@login_required
+def user_reserve_specific_spot():
+    """Reserve a specific parking spot by spot ID (Free booking)"""
+    
+    try:
+        data = request.json
+        spot_id = data.get('spot_id')
+        
+        if not spot_id:
+            return jsonify({'error': 'Spot ID is required'}), 400
+        
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        cursor.execute('BEGIN IMMEDIATE')
+        
+        try:
+            # Check if user already has an active reservation
+            cursor.execute('''
+                SELECT r.id FROM reservations r
+                JOIN parking_spots ps ON r.spot_id = ps.id
+                WHERE r.user_id = ? AND r.status = 'active'
+            ''', (request.current_user['user_id'],))
+            
+            if cursor.fetchone():
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'You already have an active reservation'}), 400
+            
+            # Check if the specific spot is available
+            cursor.execute('''
+                SELECT 
+                    ps.id,
+                    ps.spot_number,
+                    ps.status,
+                    pl.id as lot_id,
+                    pl.prime_location_name,
+                    pl.address,
+                    pl.price
+                FROM parking_spots ps
+                JOIN parking_lots pl ON ps.lot_id = pl.id
+                WHERE ps.id = ?
+            ''', (spot_id,))
+            
+            spot = cursor.fetchone()
+            
+            if not spot:
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'Parking spot not found'}), 404
+            
+            if spot['status'] != 'A':
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'This parking spot is no longer available'}), 400
+            
+            # Create the reservation (no payment required)
+            cursor.execute('''
+                INSERT INTO reservations (spot_id, user_id, status)
+                VALUES (?, ?, 'active')
+            ''', (spot_id, request.current_user['user_id']))
+            
+            reservation_id = cursor.lastrowid
+            
+            # Mark the spot as occupied
+            cursor.execute('UPDATE parking_spots SET status = "O" WHERE id = ?', (spot_id,))
+            
+            cursor.execute('COMMIT')
+            
+            # Get the complete reservation details
+            cursor.execute('''
+                SELECT 
+                    r.*,
+                    ps.spot_number,
+                    pl.prime_location_name,
+                    pl.address,
+                    pl.price
+                FROM reservations r
+                JOIN parking_spots ps ON r.spot_id = ps.id
+                JOIN parking_lots pl ON ps.lot_id = pl.id
+                WHERE r.id = ?
+            ''', (reservation_id,))
+            
+            reservation = cursor.fetchone()
+            
+            # Get user details for email notification
+            cursor.execute('SELECT username, email FROM users WHERE id = ?', (request.current_user['user_id'],))
+            user_details = cursor.fetchone()
+            
+            conn.close()
+            
+            # Send confirmation email
+            if user_details and user_details['email']:
+                reservation_email_body = f"""
                 <html>
                 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
                     <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-                            <h1 style="margin: 0; font-size: 28px;">🚗 Parking Session Completed!</h1>
+                        <div style="background: linear-gradient(135deg, #64b5f6 0%, #1976d2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                            <h1 style="margin: 0; font-size: 28px;">🅿️ Parking Spot Reserved!</h1>
                         </div>
                         
                         <div style="background: white; padding: 30px; border: 1px solid #ddd; border-radius: 0 0 10px 10px;">
-                            <h2 style="color: #667eea; margin-top: 0;">Hello {user_details['username']}!</h2>
+                            <h2 style="color: #1976d2; margin-top: 0;">Hello {user_details['username']}!</h2>
                             
-                            <p>Your parking session has been successfully completed. Here are the details:</p>
+                            <p>Great! Your specific parking spot has been successfully reserved.</p>
                             
-                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                                <h3 style="color: #495057; margin-top: 0;">Session Summary</h3>
+                            <div style="background: #e3f2fd; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #1976d2;">
+                                <h3 style="color: #0d47a1; margin-top: 0;">Reservation Details</h3>
                                 <table style="width: 100%; border-collapse: collapse;">
-                                    <tr style="border-bottom: 1px solid #dee2e6;">
-                                        <td style="padding: 8px 0; font-weight: bold;">Parking Spot:</td>
-                                        <td style="padding: 8px 0;">#{reservation['spot_number']}</td>
+                                    <tr style="border-bottom: 1px solid #bbdefb;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Reservation ID:</td>
+                                        <td style="padding: 8px 0;">#{reservation_id}</td>
                                     </tr>
-                                    <tr style="border-bottom: 1px solid #dee2e6;">
-                                        <td style="padding: 8px 0; font-weight: bold;">Location:</td>
-                                        <td style="padding: 8px 0;">{reservation.get('prime_location_name', 'N/A')}</td>
+                                    <tr style="border-bottom: 1px solid #bbdefb;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Parking Lot:</td>
+                                        <td style="padding: 8px 0;">{reservation['prime_location_name']}</td>
                                     </tr>
-                                    <tr style="border-bottom: 1px solid #dee2e6;">
-                                        <td style="padding: 8px 0; font-weight: bold;">Parked At:</td>
-                                        <td style="padding: 8px 0;">{parking_start.strftime('%Y-%m-%d %H:%M:%S')}</td>
+                                    <tr style="border-bottom: 1px solid #bbdefb;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Your Spot Number:</td>
+                                        <td style="padding: 8px 0; color: #1976d2; font-weight: bold; font-size: 18px;">#{reservation['spot_number']}</td>
                                     </tr>
-                                    <tr style="border-bottom: 1px solid #dee2e6;">
-                                        <td style="padding: 8px 0; font-weight: bold;">Left At:</td>
-                                        <td style="padding: 8px 0;">{leaving_time.strftime('%Y-%m-%d %H:%M:%S')}</td>
+                                    <tr style="border-bottom: 1px solid #bbdefb;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Address:</td>
+                                        <td style="padding: 8px 0;">{reservation['address']}</td>
                                     </tr>
-                                    <tr style="border-bottom: 1px solid #dee2e6;">
-                                        <td style="padding: 8px 0; font-weight: bold;">Duration:</td>
-                                        <td style="padding: 8px 0;">{round(duration_hours, 2)} hours</td>
+                                    <tr style="border-bottom: 1px solid #bbdefb;">
+                                        <td style="padding: 8px 0; font-weight: bold;">Rate:</td>
+                                        <td style="padding: 8px 0;">${reservation['price']}/hour</td>
                                     </tr>
                                     <tr>
-                                        <td style="padding: 8px 0; font-weight: bold; color: #28a745;">Total Cost:</td>
-                                        <td style="padding: 8px 0; font-weight: bold; color: #28a745; font-size: 18px;">${round(parking_cost, 2)}</td>
+                                        <td style="padding: 8px 0; font-weight: bold;">Reserved At:</td>
+                                        <td style="padding: 8px 0;">{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</td>
                                     </tr>
                                 </table>
                             </div>
                             
-                            <p style="color: #6c757d; font-style: italic;">Thank you for using ParkMate! We hope you had a pleasant parking experience.</p>
+                            <div style="background: #f3e5f5; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #9c27b0;">
+                                <h3 style="color: #4a148c; margin-top: 0;">📍 What's Next?</h3>
+                                <ol style="color: #4a148c; margin: 0;">
+                                    <li><strong>Navigate to:</strong> {reservation['address']}</li>
+                                    <li><strong>Look for spot:</strong> #{reservation['spot_number']}</li>
+                                    <li><strong>Park your vehicle</strong> in your reserved spot</li>
+                                    <li><strong>Payment:</strong> You'll pay when you leave the parking</li>
+                                </ol>
+                            </div>
                             
                             <div style="text-align: center; margin-top: 30px;">
+                                <p style="color: #1976d2; font-weight: bold; font-size: 16px;">
+                                    Your spot is secured! Pay when you leave! 🚗
+                                </p>
                                 <p style="color: #6c757d; font-size: 14px;">
-                                    Need help? Contact us at admin@parkmate.com
+                                    Best regards,<br>
+                                    <strong>The ParkMate Team</strong>
                                 </p>
                             </div>
                         </div>
@@ -2981,36 +4000,257 @@ def user_release_spot():
                 </html>
                 """
                 
-                #send the email asynchronously
-                try:
-                    send_email(user_details['email'], f"Parking Session Completed - Spot #{reservation['spot_number']}", release_email_body)
-                    logger.info(f"Release confirmation email sent to {user_details['email']}")
-                except Exception as email_error:
-                    logger.error(f"Failed to send release confirmation email: {email_error}")
+                send_email(
+                    user_details['email'], 
+                    f"Spot #{reservation['spot_number']} Reserved - {reservation['prime_location_name']}", 
+                    reservation_email_body
+                )
             
-            logger.info(f"User {session['user_id']} released spot {reservation['spot_number']}, cost: ${round(parking_cost, 2)}")
+            robust_cache_invalidation()
+            
+            logger.info(f"User {request.current_user['user_id']} reserved specific spot {reservation['spot_number']} (ID: {spot_id}) at {reservation['prime_location_name']}")
             
             return jsonify({
-                'message': 'Spot released successfully',
-                'leaving_timestamp': leaving_time.isoformat(),
-                'parking_cost': round(parking_cost, 2),
-                'duration_hours': round(duration_hours, 2)
-            }), 200
+                'message': f'Spot #{spot["spot_number"]} reserved successfully! Pay when you leave.',
+                'reservation': reservation
+            }), 201
             
         except Exception as e:
             cursor.execute('ROLLBACK')
-            conn.close()
             raise e
+            
+    except Exception as e:
+        logger.error(f"Error in user_reserve_specific_spot: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Payment Gateway Endpoints
+@app.route('/api/payment/validate', methods=['POST'])
+@login_required
+def validate_payment_details():
+    """Validate payment details before processing"""
+    try:
+        data = request.json
+        payment_method = data.get('payment_method')
+        payment_details = data.get('payment_details')
+        
+        if not payment_method or payment_method not in ['upi', 'card']:
+            return jsonify({'error': 'Valid payment method (upi/card) is required', 'valid': False}), 400
+            
+        if not payment_details:
+            return jsonify({'error': 'Payment details are required', 'valid': False}), 400
+        
+        errors = []
+        
+        if payment_method == 'upi':
+            upi_id = payment_details.get('upi_id', '').strip()
+            if not upi_id:
+                errors.append('UPI ID is required')
+            elif '@' not in upi_id:
+                errors.append('Invalid UPI ID format')
+            elif len(upi_id) < 5:
+                errors.append('UPI ID too short')
+                
+        elif payment_method == 'card':
+            card_details = payment_details
+            required_fields = {
+                'card_number': 'Card number',
+                'expiry_month': 'Expiry month',
+                'expiry_year': 'Expiry year',
+                'cvv': 'CVV',
+                'cardholder_name': 'Cardholder name'
+            }
+            
+            for field, display_name in required_fields.items():
+                if not card_details.get(field, '').strip():
+                    errors.append(f'{display_name} is required')
+            
+            if card_details.get('card_number'):
+                card_number = card_details['card_number'].replace(' ', '').replace('-', '')
+                if not card_number.isdigit():
+                    errors.append('Card number must contain only digits')
+                elif len(card_number) != 16:
+                    errors.append('Card number must be 16 digits')
+                    
+            if card_details.get('cvv'):
+                if not card_details['cvv'].isdigit():
+                    errors.append('CVV must contain only digits')
+                elif len(card_details['cvv']) != 3:
+                    errors.append('CVV must be 3 digits')
+                    
+            if card_details.get('expiry_month') and card_details.get('expiry_year'):
+                try:
+                    expiry_month = int(card_details['expiry_month'])
+                    expiry_year = int(card_details['expiry_year'])
+                    
+                    if expiry_month < 1 or expiry_month > 12:
+                        errors.append('Invalid expiry month')
+                    if expiry_year < datetime.now().year:
+                        errors.append('Card has expired')
+                    elif expiry_year == datetime.now().year and expiry_month < datetime.now().month:
+                        errors.append('Card has expired')
+                except ValueError:
+                    errors.append('Invalid expiry date')
+                    
+            if card_details.get('cardholder_name'):
+                if len(card_details['cardholder_name'].strip()) < 2:
+                    errors.append('Cardholder name too short')
+        
+        if errors:
+            return jsonify({'valid': False, 'errors': errors}), 400
+            
+        return jsonify({'valid': True, 'message': 'Payment details are valid'}), 200
         
     except Exception as e:
-        logger.error(f"Error releasing spot: {e}")
+        logger.error(f"Error validating payment details: {e}")
+        return jsonify({'error': 'Internal server error', 'valid': False}), 500
+
+@app.route('/api/payment/transactions', methods=['GET'])
+@login_required
+def get_user_transactions():
+    """Get user's payment transaction history"""
+    try:
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                pt.id,
+                pt.transaction_id,
+                pt.payment_method,
+                pt.amount,
+                pt.status,
+                pt.created_at,
+                pt.processed_at,
+                r.id as reservation_id,
+                ps.spot_number,
+                pl.prime_location_name,
+                pl.address
+            FROM payment_transactions pt
+            LEFT JOIN reservations r ON pt.reservation_id = r.id
+            LEFT JOIN parking_spots ps ON r.spot_id = ps.id
+            LEFT JOIN parking_lots pl ON ps.lot_id = pl.id
+            WHERE pt.user_id = ?
+            ORDER BY pt.created_at DESC
+        ''', (request.current_user['user_id'],))
+        
+        transactions = cursor.fetchall()
+        conn.close()
+        
+        return jsonify({'transactions': transactions}), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching user transactions: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+# Keep the original reservation endpoint without payment for backward compatibility
+@app.route('/api/user/reserve-specific-spot-legacy', methods=['POST'])
+@login_required
+def user_reserve_specific_spot_legacy():
+    """Reserve a specific parking spot by spot ID (Legacy - No Payment)"""
+    
+    try:
+        data = request.json
+        spot_id = data.get('spot_id')
+        
+        if not spot_id:
+            return jsonify({'error': 'Spot ID is required'}), 400
+        
+        conn = get_db()
+        conn.row_factory = dict_factory
+        cursor = conn.cursor()
+        
+        cursor.execute('BEGIN IMMEDIATE')
+        
+        try:
+            # Check if user already has an active reservation
+            cursor.execute('''
+                SELECT r.id FROM reservations r
+                JOIN parking_spots ps ON r.spot_id = ps.id
+                WHERE r.user_id = ? AND r.status = 'active'
+            ''', (request.current_user['user_id'],))
+            
+            if cursor.fetchone():
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'You already have an active reservation'}), 400
+            
+            # Check if the specific spot is available
+            cursor.execute('''
+                SELECT 
+                    ps.id,
+                    ps.spot_number,
+                    ps.status,
+                    pl.id as lot_id,
+                    pl.prime_location_name,
+                    pl.address,
+                    pl.price
+                FROM parking_spots ps
+                JOIN parking_lots pl ON ps.lot_id = pl.id
+                WHERE ps.id = ?
+            ''', (spot_id,))
+            
+            spot = cursor.fetchone()
+            
+            if not spot:
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'Parking spot not found'}), 404
+            
+            if spot['status'] != 'A':
+                cursor.execute('ROLLBACK')
+                conn.close()
+                return jsonify({'error': 'This parking spot is no longer available'}), 400
+            
+            # Create the reservation
+            cursor.execute('''
+                INSERT INTO reservations (spot_id, user_id, status)
+                VALUES (?, ?, 'active')
+            ''', (spot_id, request.current_user['user_id']))
+            
+            reservation_id = cursor.lastrowid
+            
+            # Mark the spot as occupied
+            cursor.execute('UPDATE parking_spots SET status = "O" WHERE id = ?', (spot_id,))
+            
+            cursor.execute('COMMIT')
+            
+            # Get the complete reservation details
+            cursor.execute('''
+                SELECT 
+                    r.*,
+                    ps.spot_number,
+                    pl.prime_location_name,
+                    pl.address,
+                    pl.price
+                FROM reservations r
+                JOIN parking_spots ps ON r.spot_id = ps.id
+                JOIN parking_lots pl ON ps.lot_id = pl.id
+                WHERE r.id = ?
+            ''', (reservation_id,))
+            
+            reservation = cursor.fetchone()
+            
+            conn.close()
+            robust_cache_invalidation()
+            
+            return jsonify({
+                'message': f'Spot #{spot["spot_number"]} reserved successfully (Legacy)',
+                'reservation': reservation
+            }), 201
+            
+        except Exception as e:
+            cursor.execute('ROLLBACK')
+            raise e
+            
+    except Exception as e:
+        logger.error(f"Error in user_reserve_specific_spot_legacy: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/user/my-reservations', methods=['GET'])
+@login_required
 def user_reservations():
     """Get user's reservations"""
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
     
     try:
         conn = get_db()
@@ -3029,7 +4269,7 @@ def user_reservations():
             JOIN parking_lots pl ON ps.lot_id = pl.id
             WHERE r.user_id = ?
             ORDER BY r.created_at DESC
-        ''', (session['user_id'],))
+        ''', (request.current_user['user_id'],))
         
         reservations = cursor.fetchall()
         conn.close()
@@ -3041,18 +4281,17 @@ def user_reservations():
         return jsonify({'error': 'Failed to fetch reservations'}), 500
 
 @app.route('/api/user/analytics', methods=['GET'])
+@login_required
 def user_analytics():
     """Get user analytics data"""
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
     
-    @cached(timeout=ANALYTICS_CACHE_TIMEOUT, key_prefix=f'user:{session["user_id"]}')
+    @cached(timeout=ANALYTICS_CACHE_TIMEOUT, key_prefix=f'user:{request.current_user["user_id"]}')
     def get_user_analytics():
         conn = get_db()
         conn.row_factory = dict_factory
         cursor = conn.cursor()
         
-        user_id = session['user_id']
+        user_id = request.current_user['user_id']
         
         cursor.execute('SELECT COUNT(*) as total_reservations FROM reservations WHERE user_id = ?', (user_id,))
         total_reservations = cursor.fetchone()['total_reservations']
@@ -3105,16 +4344,15 @@ def user_analytics():
 
 # UTILITY AND MANAGEMENT API ENDPOINTS
 @app.route('/api/user/preferences', methods=['GET', 'POST'])
+@login_required
 def user_preferences():
     """Manage user notification preferences"""
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
     
     conn = get_db()
     conn.row_factory = dict_factory
     cursor = conn.cursor()
     
-    user_id = session['user_id']
+    user_id = request.current_user['user_id']
     
     if request.method == 'GET':
         cursor.execute('SELECT * FROM user_preferences WHERE user_id = ?', (user_id,))
@@ -3156,16 +4394,15 @@ def user_preferences():
             return jsonify({'error': str(e)}), 500
 
 @app.route('/api/user/export-csv', methods=['POST'])
+@login_required
 def request_csv_export():
     """Request CSV export of user data"""
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
     
     try:
         conn = get_db()
         cursor = conn.cursor()
         
-        user_id = session['user_id']
+        user_id = request.current_user['user_id']
         
         cursor.execute('''
             SELECT * FROM csv_export_jobs 
@@ -3197,10 +4434,9 @@ def request_csv_export():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/user/export-status/<int:export_job_id>', methods=['GET'])
+@login_required
 def csv_export_status(export_job_id):
     """Check CSV export status"""
-    if not session.get('user_id') or session.get('is_admin'):
-        return jsonify({'error': 'User access required'}), 403
     
     try:
         conn = get_db()
@@ -3210,7 +4446,7 @@ def csv_export_status(export_job_id):
         cursor.execute('''
             SELECT * FROM csv_export_jobs 
             WHERE id = ? AND user_id = ?
-        ''', (export_job_id, session['user_id']))
+        ''', (export_job_id, request.current_user['user_id']))
         
         export_job = cursor.fetchone()
         
@@ -3225,10 +4461,9 @@ def csv_export_status(export_job_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/cache/stats', methods=['GET'])
+@admin_required
 def cache_stats():
     """Get Redis cache statistics"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         info = redis_client.info()
@@ -3247,10 +4482,9 @@ def cache_stats():
         return jsonify({'error': f'Redis connection error: {e}'}), 500
 
 @app.route('/api/admin/cache/clear', methods=['POST'])
+@admin_required
 def clear_cache():
     """Clear Redis cache"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         data = request.json
@@ -3270,52 +4504,10 @@ def clear_cache():
     except redis.RedisError as e:
         return jsonify({'error': f'Redis error: {e}'}), 500
 
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """System health check endpoint"""
-    health_status = {
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat(),
-        'services': {}
-    }
-    
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT 1')
-        conn.close()
-        health_status['services']['database'] = 'healthy'
-    except Exception as e:
-        health_status['services']['database'] = f'unhealthy: {e}'
-        health_status['status'] = 'degraded'
-    
-    try:
-        redis_client.ping()
-        health_status['services']['redis'] = 'healthy'
-    except Exception as e:
-        health_status['services']['redis'] = f'unhealthy: {e}'
-        health_status['status'] = 'degraded'
-    
-    try:
-        inspect = celery.control.inspect()
-        stats = inspect.stats()
-        if stats:
-            health_status['services']['celery'] = 'healthy'
-        else:
-            health_status['services']['celery'] = 'no workers available'
-            health_status['status'] = 'degraded'
-    except Exception as e:
-        health_status['services']['celery'] = f'unhealthy: {e}'
-        health_status['status'] = 'degraded'
-    
-    status_code = 200 if health_status['status'] == 'healthy' else 503
-    return jsonify(health_status), status_code
-
 @app.route('/api/admin/trigger-parking-reminders', methods=['POST'])
+@admin_required
 def trigger_parking_reminders():
     """Manually trigger parking reminders (Admin only)"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         #triggers th Celery task
@@ -3329,10 +4521,9 @@ def trigger_parking_reminders():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/trigger-monthly-reports', methods=['POST'])
+@admin_required
 def trigger_monthly_reports():
     """Manually trigger monthly reports generation (Admin only)"""
-    if not session.get('is_admin'):
-        return jsonify({'error': 'Admin access required'}), 403
     
     try:
         data = request.json if request.json else {}

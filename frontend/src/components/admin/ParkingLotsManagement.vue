@@ -205,34 +205,47 @@ onMounted(() => {
 <style scoped>
 .parking-lots-management {
   margin: 2rem 0;
-  color: #2c3e50;
+  color: white;
 }
 
 .parking-lots-management h2 {
-  color: #2c3e50;
+  color: white;
+  background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
   margin-bottom: 1.5rem;
+  font-weight: 600;
 }
 
 .create-lot-btn {
-  background-color: #42b883;
+  background: linear-gradient(135deg, #6f80cfff 0%, #764ba2 100%);
   color: white;
   border: none;
-  padding: 0.7rem 1.5rem;
-  border-radius: 4px;
+  padding: 0.75rem 1.5rem;
+  border-radius: 12px;
   cursor: pointer;
   margin-bottom: 1rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+  font-weight: 500;
 }
 
 .create-lot-btn:hover {
-  background-color: #38a169;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+  background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
 }
 
 form {
   margin-bottom: 1.5rem;
-  background-color: #f8f9fa;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   padding: 1.5rem;
-  border-radius: 8px;
-  border: 1px solid #dee2e6;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.1);
 }
 
 form div {
@@ -242,51 +255,73 @@ form div {
 label {
   display: block;
   margin-bottom: 0.5rem;
-  color: #495057;
+  color: rgba(255, 255, 255, 0.9);
   font-weight: 500;
 }
 
 input {
   width: 100%;
-  padding: 0.5rem;
-  border-radius: 4px;
-  border: 1px solid #ced4da;
-  color: #495057;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  color: white;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+input:focus {
+  outline: none;
+  border-color: rgba(102, 126, 234, 0.6);
+  background: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
 }
 
 button[type="submit"] {
-  background-color: #3498db;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
-  padding: 0.7rem 1.5rem;
-  border-radius: 4px;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
   cursor: pointer;
   margin-top: 1rem;
   margin-right: 0.5rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+  font-weight: 500;
 }
 
 button[type="submit"]:hover {
-  background-color: #2980b9;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
 }
 
 button[type="button"] {
-  background-color: #6c757d;
+  background: rgba(255, 255, 255, 0.2);
   color: white;
-  border: none;
-  padding: 0.7rem 1.5rem;
-  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
   cursor: pointer;
   margin-top: 1rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-weight: 500;
 }
 
 button[type="button"]:hover {
-  background-color: #5a6268;
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
 }
 
 form h3 {
-  color: #2c3e50;
+  color: white;
   margin-bottom: 1rem;
   margin-top: 0;
+  font-weight: 600;
 }
 
 .lots-list {
@@ -296,55 +331,81 @@ form h3 {
 }
 
 .lot-card {
-  background-color: white;
-  padding: 1rem;
-  border-radius: 6px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  border: 1px solid #e9ecef;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 1.5rem;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.lot-card:hover {
+  transform: translateY(-5px);
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 15px 40px rgba(102, 126, 234, 0.2);
 }
 
 .lot-card h3 {
   margin-top: 0;
-  color: #2c3e50;
+  color: white;
   margin-bottom: 0.5rem;
+  font-weight: 600;
 }
 
 .lot-card p {
-  color: #6c757d;
+  color: rgba(255, 255, 255, 0.8);
   margin-bottom: 0.5rem;
+  font-weight: 500;
 }
 
 .lot-card button {
   border: none;
   padding: 0.5rem 1rem;
-  border-radius: 4px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: background-color 0.3s;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   margin-top: 0.5rem;
   margin-right: 0.5rem;
   color: white;
+  font-weight: 500;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
 }
 
 .lot-card button:first-of-type {
-  background-color: #28a745;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
 .lot-card button:first-of-type:hover {
-  background-color: #218838;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
 }
 
 .lot-card button:last-of-type {
-  background-color: #dc3545;
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
 }
 
 .lot-card button:last-of-type:hover:not(:disabled) {
-  background-color: #c82333;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(240, 147, 251, 0.3);
 }
 
 .lot-card button:disabled {
-  background-color: #6c757d;
+  background: rgba(255, 255, 255, 0.2);
   cursor: not-allowed;
   opacity: 0.6;
+  transform: none;
+}
+
+@media (max-width: 768px) {
+  .lots-list {
+    grid-template-columns: 1fr;
+  }
+  
+  form {
+    padding: 1rem;
+  }
 }
 </style>
 
