@@ -701,9 +701,7 @@ For new features, please:
 
 ### 🎯 Short Term (Next 3 months)
 - [ ] **Mobile App** - React Native implementation
-- [ ] **Payment Gateway** - Stripe/PayPal integration
 - [ ] **Real-time Notifications** - WebSocket implementation
-- [ ] **API Rate Limiting** - Enhanced security
 - [ ] **Unit Testing** - Comprehensive test suite
 
 ### 🚀 Medium Term (3-6 months)
@@ -757,17 +755,6 @@ We extend our gratitude to the following projects and communities:
 - **[MailHog](https://github.com/mailhog/MailHog)** - For email testing capabilities
 - **Open Source Community** - For continuous inspiration and support
 
-## 📞 Support
-
-### 💬 Community Support
-- **GitHub Issues**: [Report bugs and request features](https://github.com/Deepesh1604/ParkMate/issues)
-- **Discussions**: [Join community discussions](https://github.com/Deepesh1604/ParkMate/discussions)
-- **Wiki**: [Browse documentation](https://github.com/Deepesh1604/ParkMate/wiki)
-
-### 📧 Direct Contact
-- **Email**: deepesh@example.com
-- **LinkedIn**: [Deepesh Kumar](https://linkedin.com/in/deepesh-kumar)
-- **Twitter**: [@deepesh_dev](https://twitter.com/deepesh_dev)
 
 ---
 
